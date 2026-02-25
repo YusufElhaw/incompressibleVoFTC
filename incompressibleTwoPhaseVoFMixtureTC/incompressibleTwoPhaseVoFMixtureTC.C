@@ -186,8 +186,8 @@ Foam::incompressibleTwoPhaseVoFMixtureTC::incompressibleTwoPhaseVoFMixtureTC
     species1Name_= thermo1_->species()[0];
     species2Name_= thermo1_->species()[1];
     
-    //thermo1_->validate(phase1Name(), "e");     // naking sure that physicalProperties of the Phase is on internalEnergy or Enthalpy
-    //thermo2_->validate(phase2Name(), "e");     // naking sure that physicalProperties of the Phase is on internalEnergy or Enthalpy
+    //thermo1_->validate(phase1Name(), "e");     // making sure that physicalProperties of the Phase is on internalEnergy or Enthalpy
+    //thermo2_->validate(phase2Name(), "e");     // making sure that physicalProperties of the Phase is on internalEnergy or Enthalpy
     
   
     // --- Map species indices in each thermo ---

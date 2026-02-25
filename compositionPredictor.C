@@ -36,7 +36,7 @@ License
 
 void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 {
- //Info<< "compositionPredictor() called, Meldung from compositionPredictor.C " <<  nl;
+ Info<< "compositionPredictor() called, Meldung from compositionPredictor.C " <<  nl;
 
  // --- Phase densities from thermo (rhoConst -> still a volScalarField) ---
    const volScalarField& rho1(mixture.thermo1().rho());
@@ -65,7 +65,7 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
           IOobject::READ_IF_PRESENT, IOobject::NO_WRITE
         ),
         mesh,
-        dimensionedScalar("K", dimless, 1)
+        dimensionedScalar("K", dimless, 1e-2)
     );
 
     volScalarField K2
@@ -79,7 +79,7 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
           IOobject::NO_WRITE
         ),
         mesh,
-        dimensionedScalar("K", dimless, 1)
+        dimensionedScalar("K", dimless, 1e-2)
     );
   // bounded alphas (ALPHA is equal to 0<=alpha<=1)
     volScalarField ALPHA1("ALPHA1", min(max(alpha1, scalar(0)), scalar(1)));
@@ -214,8 +214,7 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 
   // Diffusivity D_j (Start: alpha-gewichtet -erstamliger Wert) // to be changed
 
-    volScalarField tDEff =
-    thermophysicalTransport.DEff();
+    volScalarField tDEff =  thermophysicalTransport.DEff();
 
   // Solver for C-Equations
     // Eq.10: Phi_j = -D * [ C(1-K)/(alpha1 + K*alpha2) ] grad(alpha1) // doi:10.1016/j.ces.2010.01.012
@@ -315,8 +314,8 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
    
   // Push mass-fractions into thermo objects + update derived properties
     mixture.correctComposition();
-    mixture.correctThermo();
-    mixture.correct();
+   // mixture.correctThermo();
+   // mixture.correct();
 }
 
 

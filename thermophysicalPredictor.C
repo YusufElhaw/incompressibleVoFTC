@@ -34,10 +34,15 @@ License
 
 void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
 {
-Info <<nl<< "thermophysicalPredictor läuft"<<endl;
+  compositionPredictor();
+
+  Info <<nl<< "thermophysicalPredictor läuft"<<endl;
   const volScalarField& rho1(mixture.thermo1().rho()); 
   const volScalarField& rho2(mixture.thermo2().rho());
   
+  const volScalarField& Cpv1(mixture.thermo1().Cpv());
+  const volScalarField& Cpv2(mixture.thermo2().Cpv());
+
   // Energy of the phases (in physicalProperties Choose Enthalpy or InternalEnergy)
   const volScalarField& e1(mixture.thermo1().he());   //he Enthalpy or InternalEnergy
   const volScalarField& e2(mixture.thermo2().he());   //he Enthalpy or InternalEnergy
@@ -47,30 +52,36 @@ Info <<nl<< "thermophysicalPredictor läuft"<<endl;
 
    volScalarField& T = mixture.T();
   ////////////////////////////////
-//     // zusammengeführte Energie
-//    
-//     tmp<volScalarField> tAlphaRhoCpv
-//     (
-//       alpha1*rho1*mixture.thermo1().Cpv()+
-//       alpha2*rho2*mixture.thermo2().Cpv()
-//     );
-//     const volScalarField& alphaRhoCpv=tAlphaRhoCpv();
-//    
-//     const surfaceScalarField alphaRhoCpvPhi = fvc::interpolate(alphaRhoCpv)*phi;
-//     
-//     fvScalarMatrix TEqn
-//    (
-//     
-//     fvm::ddt(alphaRhoCpv, T) +
-//     fvm::div(alphaRhoCpvPhi, T) 
-//     ==
-//     //-
-//     fvm::laplacian(thermophysicalTransport.kappaEff(), T) 
-//     
-//    // ==
-//    //   (e1Source&e1)
-//    // + (e2Source&e2)
-//    );  
+    
+    const volScalarField rhoCpv("rhoCpv", alpha1*rho1*Cpv1+alpha2*rho2*Cpv2);
+
+    const surfaceScalarField alphaRhoCpvPhi1
+    (
+      "alphaRhoCpvPhi1", fvc::interpolate(Cpv1)*alphaRhoPhi1
+    );
+
+    const surfaceScalarField alphaRhoCpvPhi2
+    (
+      "alphaRhoCpvPhi2", fvc::interpolate(Cpv2)*alphaRhoPhi2
+    );
+
+    const surfaceScalarField rhoCpvPhi
+    (   
+        "rhoCpvPhi",
+        alphaRhoCpvPhi1 + alphaRhoCpvPhi2
+    );
+     
+    fvScalarMatrix TEqn
+    (
+      fvm::ddt(rhoCpv, T)
+    + fvm::div(rhoCpvPhi, T)
+    - fvm::Sp(fvc::ddt(rhoCpv) + fvc::div(rhoCpvPhi), T)
+    - fvm::laplacian(thermophysicalTransport.kappaEff(), T)
+    ==
+      (e1Source&e1)
+    + (e2Source&e2)
+    );
+
 
  /////////////////////////////
 
@@ -166,51 +177,7 @@ Info <<nl<< "thermophysicalPredictor läuft"<<endl;
 //  );
 //*/
  
-    
-    fvScalarMatrix TEqn
-    (
-        correction
-        (
-            mixture.thermo1().Cv()()
-           *(
-                fvm::ddt(alpha1, rho1, T) + fvm::div(alphaRhoPhi1, T)
-              - (
-                    e1Source.hasDiag()
-                  ? fvm::Sp(contErr1(), T) + fvm::Sp(e1Source.A(), T)
-                  : fvm::Sp(contErr1(), T)
-                )
-            )
-          + mixture.thermo2().Cv()()
-           *(
-                fvm::ddt(alpha2, rho2, T) + fvm::div(alphaRhoPhi2, T)
-              - (
-                    e2Source.hasDiag()
-                  ? fvm::Sp(contErr2(), T) + fvm::Sp(e2Source.A(), T)
-                  : fvm::Sp(contErr2(), T)
-                )
-            )
-        )
-
-      + fvc::ddt(alpha1, rho1, e1) + fvc::div(alphaRhoPhi1, e1)
-      - contErr1()*e1
-      + fvc::ddt(alpha2, rho2, e2) + fvc::div(alphaRhoPhi2, e2)
-      - contErr2()*e2
-
-      - fvm::laplacian(thermophysicalTransport.kappaEff(), T)
-
-      + (
-            mixture.totalInternalEnergy()
-          ?
-            fvc::div(fvc::absolute(phi, U), p)()()
-          + (fvc::ddt(rho, K) + fvc::div(rhoPhi, K))()()
-          - (U()&(fvModels().source(rho, U)&U)()) - (contErr1() + contErr2())*K
-          :
-            p*fvc::div(fvc::absolute(phi, U))()()
-        )
-     ==
-        (e1Source&e1)
-      + (e2Source&e2)
-    );
+ 
 
     TEqn.relax();
 

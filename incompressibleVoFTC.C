@@ -173,8 +173,6 @@ void Foam::solvers::incompressibleVoFTC::prePredictor()
          (fvc::ddt(alpha2, mixture.thermo2().rho())()() + fvc::div(alphaRhoPhi2)()()
       - (fvModels().source(alpha2, mixture.thermo2().rho())&mixture.thermo2().rho())()
     ));
-   
-    compositionPredictor();   
 }
 
 

@@ -1,0 +1,11 @@
+SOURCE += incompressibleTwoPhaseVoFMixtureTC/incompressibleTwoPhaseVoFMixtureTC.C
+SOURCE += incompressibleInterPhaseTransportModelTC/incompressibleInterPhaseTransportModelTC.C
+SOURCE += incompressibleInterPhaseThermophysicalTransportModelTC/incompressibleInterPhaseThermophysicalTransportModelTC.C
+SOURCE += massDiffusivity/massDiffusivity.C
+
+SOURCE += compositionPredictor.C
+SOURCE += thermophysicalPredictor.C
+SOURCE += alphaSuSp.C
+SOURCE += incompressibleVoFTC.C
+
+LIB = $(FOAM_USER_LIBBIN)/libincompressibleVoFTC
