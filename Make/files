@@ -1,0 +1,11 @@
+incompressibleTwoPhaseVoFMixtureTC/incompressibleTwoPhaseVoFMixtureTC.C
+incompressibleInterPhaseTransportModelTC/incompressibleInterPhaseTransportModelTC.C
+incompressibleInterPhaseThermophysicalTransportModelTC/incompressibleInterPhaseThermophysicalTransportModelTC.C
+massDiffusivity/massDiffusivity.C
+
+compositionPredictor.C
+thermophysicalPredictor.C
+alphaSuSp.C
+incompressibleVoFTC.C
+
+LIB = $(FOAM_USER_LIBBIN)/libincompressibleVoFTC
