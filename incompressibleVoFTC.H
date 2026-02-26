@@ -62,6 +62,7 @@ See also
 #include "incompressibleTwoPhaseVoFMixtureTC.H"
 #include "incompressibleInterPhaseTransportModelTC.H"
 #include "incompressibleInterPhaseThermophysicalTransportModelTC.H"
+//#include "VLEConstant.H"
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -99,21 +100,13 @@ protected:
         Foam::pressureReference pressureReference_;
 
 
-///////////////////////
-    // vorhanden in compressible Modell // bei Bedarf hinzufügen
-// Kinematic properties
+    // Kinematic properties
 
         // Phase-1 mass-flux
-       surfaceScalarField alphaRhoPhi1;
+        surfaceScalarField alphaRhoPhi1;
 
         // Phase-2 mass-flux
         surfaceScalarField alphaRhoPhi2;
-
-        //- Kinetic energy field
-        //  Used in the energy equation
-        volScalarField K;
-/////////////////////
-
 
     // Momentum transport
 
@@ -123,15 +116,8 @@ protected:
     // Thermophysical transport
 
         //- Thermophysical transport model
-        incompressibleInterPhaseThermophysicalTransportModelTC
-            thermophysicalTransport;
-
-        //- Phase-1 continuity error
-        tmp<volScalarField::Internal> contErr1;
-
-        //- Phase-2 continuity error
-        tmp<volScalarField::Internal> contErr2;
-
+        incompressibleInterPhaseThermophysicalTransportModelTC thermophysicalTransport;
+     
     // Protected Member Functions
 
         //- Return the pressure reference
@@ -205,12 +191,6 @@ public:
 
         //- Predict thermophysical transport
         virtual void thermophysicalTransportPredictor();
-
-/*      // vorhanden in compressible Modell // bei Bedarf hinzufügen
-//- Construct and optionally solve the momentum equation 
-        virtual void momentumPredictor();
-*/
-       
 
         //- Construct and solve the energy equation,
         //  convert to temperature

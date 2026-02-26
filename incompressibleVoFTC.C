@@ -77,24 +77,18 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
         p_rgh,
         pimple.dict()
     ),
-///////////////////
-// vorhanden in compressible Modell // bei Bedarf hinzufügen
    alphaRhoPhi1
     (
         IOobject::groupName("alphaRhoPhi", alpha1.group()),
         fvc::interpolate(mixture.thermo1().rho())*alphaPhi1
-
     ),
 
     alphaRhoPhi2
     (
         IOobject::groupName("alphaRhoPhi", alpha2.group()),
         fvc::interpolate(mixture.thermo2().rho())*alphaPhi2
-
     ),
 
-    K("K", 0.5*magSqr(U)),
-////////////////////
     momentumTransport
     (
         U,
@@ -157,22 +151,8 @@ void Foam::solvers::incompressibleVoFTC::prePredictor()
     alphaRhoPhi2 = fvc::interpolate((mixture.thermo2().rho()))*alphaPhi2; 
 
     // Calculate the mass-flux
-    rhoPhi =
-        alphaPhi1*fvc::interpolate(mixture.thermo1().rho())
-      + alphaPhi2*fvc::interpolate(mixture.thermo2().rho());
-    
-    
-    contErr1 =
-    (
-       ( fvc::ddt(alpha1, mixture.thermo1().rho())()() + fvc::div(alphaRhoPhi1)()()
-      - (fvModels().source(alpha1, mixture.thermo1().rho())&mixture.thermo1().rho())()
-    ));
-
-    contErr2 =
-    (
-         (fvc::ddt(alpha2, mixture.thermo2().rho())()() + fvc::div(alphaRhoPhi2)()()
-      - (fvModels().source(alpha2, mixture.thermo2().rho())&mixture.thermo2().rho())()
-    ));
+    rhoPhi  = alphaPhi1*fvc::interpolate(mixture.thermo1().rho())
+            + alphaPhi2*fvc::interpolate(mixture.thermo2().rho());
 }
 
 
@@ -184,7 +164,7 @@ void Foam::solvers::incompressibleVoFTC::momentumTransportPredictor()
 
 void Foam::solvers::incompressibleVoFTC::thermophysicalTransportPredictor()
 {
-    thermophysicalTransport.predict();// hinzugefügt
+    thermophysicalTransport.predict();
 }
 
 
@@ -203,7 +183,7 @@ void Foam::solvers::incompressibleVoFTC::momentumTransportCorrector()
 
 void Foam::solvers::incompressibleVoFTC::thermophysicalTransportCorrector()
 {
-    thermophysicalTransport.correct(); // hinzugefügt
+    thermophysicalTransport.correct();
 }
 
 
