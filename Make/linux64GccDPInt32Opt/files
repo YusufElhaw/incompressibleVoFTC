@@ -2,6 +2,7 @@ SOURCE += incompressibleTwoPhaseVoFMixtureTC/incompressibleTwoPhaseVoFMixtureTC.
 SOURCE += incompressibleInterPhaseTransportModelTC/incompressibleInterPhaseTransportModelTC.C
 SOURCE += incompressibleInterPhaseThermophysicalTransportModelTC/incompressibleInterPhaseThermophysicalTransportModelTC.C
 SOURCE += massDiffusivity/massDiffusivity.C
+SOURCE += VLEConstant/VLEConstant.C
 
 SOURCE += compositionPredictor.C
 SOURCE += thermophysicalPredictor.C

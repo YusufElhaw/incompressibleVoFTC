@@ -25,19 +25,19 @@ Class
     Foam::VLEConstant
 
 Description
-    class to manage the value of Vapur Liquid Equilibrium (VLE) constant based
-    on the Rauolt's law. 
+    class to manage the value of Vapour Liquid Equilibrium (VLE) constant based
+    on the Raoult's law. 
     y 𝜑_L p  =  x 𝛾 𝜑_G p_sat exp{1/(RT)*  ∫( v_0 )dp }
     y and x are the molfraction in the gas phase and the liquid phase 
-    respectivly. 
-    𝛾 is the activity coeffecient. 
+    respectively. 
+    𝛾 is the activity coefficient. 
     𝜑_L and 𝜑_G are the fugacity factors.
     p_sat is the saturation pressure of the Species.
     exp{1/(RT)*  ∫( v_0 )dp|s,0-P } is the poynting correction.
 
     The VLE constant is in the formation of K=y/x. 
     For non-polar and chemical similar mixtures and low pressures can the 
-    fugacity factors and the Poynting factor and the activity coeffecient be 
+    fugacity factors and the Poynting factor and the activity coefficient be 
     assumed to be 1. 
     
     For more details see:
@@ -55,6 +55,11 @@ SourceFiles
 #include "volFields.H"
 #include "surfaceFields.H"
 #include "IOdictionary.H"
+#include "dictionary.H"
+#include "autoPtr.H"
+#include "word.H"
+
+#include "saturationPressureModel.H"
 #include "incompressibleInterPhaseTransportModelTC.H"
 #include "incompressibleTwoPhaseVoFMixtureTC.H"
 
@@ -64,42 +69,70 @@ namespace Foam
 class VLEConstant
 {
     const incompressibleInterPhaseTransportModelTC& turbulence_;
-    const incompressibleTwoPhaseVoFMixtureTC& mixture_;
+    const incompressibleTwoPhaseVoFMixtureTC& mixture;
 
-    // parameters per-
-    dimensionedScalar Dm1_, Dm2_;  // [m2/s]
+    /// Names
+    word phaseL_;     // e.g. "phase1" / "liquid"
+    word phaseG_;     // e.g. "phase2" / "gas"
+    word specie1_;    // optional label/name for user readability
+    word specie2_;
+    //scalar KMin_;
+    //scalar KMax_;
 
-    //  turbulence per-phase flags (read once)
-    bool turb1_, turb2_;
+    // Saturation pressure models (one per species)
+    autoPtr<saturationPressureModel> pSat1Model_;
+    autoPtr<saturationPressureModel> pSat2Model_;
 
-    // dictionaries (cached in registry)
-    const IOdictionary& readThermophysicalTransportDict(const word& phaseName) const;
-    
-    // checking from momentumTransport both Phases for turbulence
-    bool checkPhaseTurbulence(const word& phaseName) const;
+    const IOdictionary& readDictOrDie(const word& dictName) const;
+    const dictionary& coeffsDict(const word& dictName) const;
 
 public:
-    VLEConstant(const incompressibleInterPhaseTransportModelTC& turb);
+    // Construct from transport + mixture.
+    // dictName: file in constant/, "VLEProperties"
+    VLEConstant
+    (
+        const incompressibleInterPhaseTransportModelTC& turb,
+        const incompressibleTwoPhaseVoFMixtureTC& mix,
+        const word& dictName = "VLEProperties"
+    );
 
-    // saturation pressure
-    virtual void pSat(); 
+    // pSat(T) fields
+    tmp<volScalarField> pSat1(const volScalarField& T) const;
+    tmp<volScalarField> pSat2(const volScalarField& T) const;
 
-    // activity coeffecient 
-    virtual void gamma();
+    // K = pSat/p (Raoult, idealised: gamma=phiL=phiG=Poy=1)
+    tmp<volScalarField> K1(const volScalarField& p, const volScalarField& T) const;
+    tmp<volScalarField> K2(const volScalarField& p, const volScalarField& T) const;
 
-    // fugacity coeffecient of the liquid phase
-    virtual void phiL();
+    // Convenience: use phase temperatures (if desired)
+    tmp<volScalarField> K1(const volScalarField& p) const;
+    tmp<volScalarField> K2(const volScalarField& p) const;
 
-    // fugacity coeffecient of the Gas phase
-    virtual void phiG();
+    // Accessors
+    const word& phaseL() const { return phaseL_; }
+    const word& phaseG() const { return phaseG_; }
+    // Destructor 
+    virtual ~VLEConstant();
+
+    // Member Functions
+
+    // activity coefficient 
+    tmp<scalarField> gamma(const label patchi) const;
+    tmp<volScalarField> gamma(const volScalarField& T) const;
+
+    // fugacity coefficient of the liquid phase
+    tmp<scalarField> phiL (const label patchi) const;
+    tmp<volScalarField> phiL (const volScalarField& p, const volScalarField& T) const;
+
+    // fugacity coefficient of the Gas phase
+    tmp<scalarField> phiG (const label patchi) const;
+    tmp<volScalarField> phiG (const volScalarField& p, const volScalarField& T) const;
 
     // poynting correction
-    virtual void Poy();
-
+    tmp<scalarField> Poy  (const label patchi) const;
+    tmp<volScalarField> Poy (const volScalarField& p, const volScalarField& T) const;
 
 };
-
 } // End namespace Foam
 
 #endif
-
