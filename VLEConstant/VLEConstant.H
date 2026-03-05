@@ -27,7 +27,7 @@ Class
 Description
     class to manage the value of Vapour Liquid Equilibrium (VLE) constant based
     on the Raoult's law. 
-    y 𝜑_L p  =  x 𝛾 𝜑_G p_sat exp{1/(RT)*  ∫( v_0 )dp }
+    y 𝜑_G p  =  x 𝛾 𝜑_L p_sat exp{1/(RT) * ∫( v_0 )dp }
     y and x are the molfraction in the gas phase and the liquid phase 
     respectively. 
     𝛾 is the activity coefficient. 
@@ -43,6 +43,52 @@ Description
     For more details see:
     Themis Matsoukas: Fundamentals of Chemical Engineering Thermodynamics.
 
+    Usage:
+    in constant make a File with the name: "VLEProperties" 
+    VLEConstantCoeffs
+    {
+    <Species1> // same name in physicalProperties.<phase1>
+    {
+        pSat1
+        {
+            type constant;  // or Antoine or ArdenBuck
+            value 1;        // for constant write the value Always in bar.
+            // ... Antoine-Koeffizienten wie in OpenFOAM saturationModels
+        }
+    }
+
+    <Species2> // same name in physicalProperties.<phase1>
+    { 
+        pSat2 
+        {
+            type Antoine;   // pSat= exp(A + B/(C + T))
+            A    ;
+            B    ;
+            C    ; 
+        }
+    }
+    }
+
+    Attention:
+    1-  for pSat type constant, write the saturation pressure in bar.
+    2-  look carefully on the units of the Antoine equation. in this solver it is 
+        assumed, that the saturation pressure is in bar. 
+    3-  Antoine equation calculates with the natural logarithm in the form: 
+        ln(pSat) = A + B/(C + T) or 
+        pSat = e^{A + B/(C + T)}
+        If the constants provided are for Antoine equation in the decadic logarithm:
+        log10(pSat) = A + B/(C + T) or 
+        pSat= 10^{A_d + B_d/(C_d + T)} 
+        you have to recalculate them as follows: 
+        A = ln(10)*A_d
+        B = ln(10)*B_d
+        C = C_d
+        and feed the A, B and C in the pSat subdictionary. 
+    4-  be careful of the signs of the coeffecients A, B and C. They are all positive
+        in this solver. If your equation looks like this: 
+        ln(P) = A − (B / (T + C)), make sure to feed the solver with a negative B.
+} 
+
 
 SourceFiles
     VLEConstant.C
@@ -52,12 +98,16 @@ SourceFiles
 #ifndef VLEConstant_H
 #define VLEConstant_H
 
-#include "volFields.H"
-#include "surfaceFields.H"
-#include "IOdictionary.H"
-#include "dictionary.H"
-#include "autoPtr.H"
-#include "word.H"
+//#include "volFields.H"
+//#include "surfaceFields.H"
+//#include "IOdictionary.H"
+//#include "dictionary.H"
+//#include "autoPtr.H"
+//#include "word.H"
+
+//#include "wordList.H"
+//#include "HashTable.H"
+//#include "fvMesh.H"
 
 #include "saturationPressureModel.H"
 #include "incompressibleInterPhaseTransportModelTC.H"
@@ -68,69 +118,68 @@ namespace Foam
 
 class VLEConstant
 {
+     // Private data
     const incompressibleInterPhaseTransportModelTC& turbulence_;
-    const incompressibleTwoPhaseVoFMixtureTC& mixture;
+    const incompressibleTwoPhaseVoFMixtureTC& mixture_;
+    const fvMesh& mesh_;
 
-    /// Names
-    word phaseL_;     // e.g. "phase1" / "liquid"
-    word phaseG_;     // e.g. "phase2" / "gas"
-    word specie1_;    // optional label/name for user readability
-    word specie2_;
-    //scalar KMin_;
-    //scalar KMax_;
+    const word dictName_;
+    const word speciesName_;
 
-    // Saturation pressure models (one per species)
-    autoPtr<saturationPressureModel> pSat1Model_;
-    autoPtr<saturationPressureModel> pSat2Model_;
+    autoPtr<IOdictionary> vleDictPtr_;
+    autoPtr<saturationPressureModel> pSatModel_;
 
+    // Helpers
     const IOdictionary& readDictOrDie(const word& dictName) const;
-    const dictionary& coeffsDict(const word& dictName) const;
+    const dictionary& speciesDictOrDie(const IOdictionary& d, const word& speciesName) const;
 
 public:
-    // Construct from transport + mixture.
-    // dictName: file in constant/, "VLEProperties"
+    // Construct for a single species
     VLEConstant
     (
         const incompressibleInterPhaseTransportModelTC& turb,
         const incompressibleTwoPhaseVoFMixtureTC& mix,
+        const word& speciesName,
         const word& dictName = "VLEProperties"
     );
+    //- Disallow default bitwise copy construction
+    VLEConstant (const VLEConstant&) = delete;
+    void operator=(const VLEConstant&) = delete;
 
-    // pSat(T) fields
-    tmp<volScalarField> pSat1(const volScalarField& T) const;
-    tmp<volScalarField> pSat2(const volScalarField& T) const;
-
-    // K = pSat/p (Raoult, idealised: gamma=phiL=phiG=Poy=1)
-    tmp<volScalarField> K1(const volScalarField& p, const volScalarField& T) const;
-    tmp<volScalarField> K2(const volScalarField& p, const volScalarField& T) const;
-
-    // Convenience: use phase temperatures (if desired)
-    tmp<volScalarField> K1(const volScalarField& p) const;
-    tmp<volScalarField> K2(const volScalarField& p) const;
-
-    // Accessors
-    const word& phaseL() const { return phaseL_; }
-    const word& phaseG() const { return phaseG_; }
     // Destructor 
     virtual ~VLEConstant();
+
+    // pSat(T) fields
+    tmp<volScalarField> pSat(const volScalarField& T) const;
+
+    // K = pSat/p (Raoult, idealised: gamma=phiL=phiG=Poy=1)
+    tmp<volScalarField> K(const volScalarField& p, const volScalarField& T) const;
+
+
+    // Accessors
+    //const word& phaseL() const { return mixture.thermo1().phaseName(); }
+    //const word& phaseG() const { return mixture.thermo2().phaseName(); }
+    
+    const word& speciesName() const { return speciesName_; }
 
     // Member Functions
 
     // activity coefficient 
-    tmp<scalarField> gamma(const label patchi) const;
-    tmp<volScalarField> gamma(const volScalarField& T) const;
+ //   tmp<scalarField> gamma(const label patchi) const;
+    virtual tmp<scalarField>    gamma(const label patchi) const;
+    virtual tmp<volScalarField> gamma(const volScalarField& Y1, const volScalarField& Y2) const;
 
     // fugacity coefficient of the liquid phase
-    tmp<scalarField> phiL (const label patchi) const;
-    tmp<volScalarField> phiL (const volScalarField& p, const volScalarField& T) const;
+    virtual tmp<scalarField>    phiL (const label patchi) const;
+    virtual tmp<volScalarField> phiL (const volScalarField& p, const volScalarField& T) const;
 
     // fugacity coefficient of the Gas phase
-    tmp<scalarField> phiG (const label patchi) const;
-    tmp<volScalarField> phiG (const volScalarField& p, const volScalarField& T) const;
+    virtual tmp<scalarField>    phiG (const label patchi) const;
+    virtual tmp<volScalarField> phiG (const volScalarField& p, const volScalarField& T) const;
 
     // poynting correction
-    tmp<scalarField> Poy  (const label patchi) const;
-    tmp<volScalarField> Poy (const volScalarField& p, const volScalarField& T) const;
+    virtual tmp<scalarField>    Poy (const label patchi) const;
+    virtual tmp<volScalarField> Poy (const volScalarField& p, const volScalarField& T) const;
 
 };
 } // End namespace Foam

@@ -85,9 +85,6 @@ Foam::incompressibleTwoPhaseVoFMixtureTC::incompressibleTwoPhaseVoFMixtureTC
     s1IndexThermo2_(-1),
     s2IndexThermo2_(-1),
     
-    //residualAlpha1_("residualAlpha1", dimless, 0.0),
-    //residualAlpha2_("residualAlpha2", dimless, 0.0),
-
     thermo1_(nullptr),
     thermo2_(nullptr),
     ////
@@ -330,8 +327,7 @@ void Foam::incompressibleTwoPhaseVoFMixtureTC::correct()
 
     const volScalarField limitedAlpha1
     (
-        "limitedAlpha1",
-        min(max(alpha1(), scalar(0)), scalar(1))
+        "limitedAlpha1", min(max(alpha1(), scalar(0)), scalar(1))
     );
 
     const volScalarField limitedAlpha2 ("limitedAlpha2", scalar(1) - limitedAlpha1);

@@ -59,15 +59,15 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
        "rhoCpvPhi",
        // alphaRhoCpvPhi1                  
        fvc::interpolate(Cpv1)*alphaRhoPhi1
-      // + alphaRhoCpvPhi2
+       // + alphaRhoCpvPhi2
      + fvc::interpolate(Cpv2)*alphaRhoPhi2
    );
     
-   fvScalarMatrix TEqn
+   fvScalarMatrix TEqn 
    (
      fvm::ddt(rhoCpv, T)
    + fvm::div(rhoCpvPhi, T)
-   - fvm::Sp(fvc::ddt(rhoCpv) + fvc::div(rhoCpvPhi), T)
+   - fvm::Sp(fvc::ddt(rhoCpv) + fvc::div(rhoCpvPhi), T) //added for the stability by changes in rhoCp
    - fvm::laplacian(thermophysicalTransport.kappaEff(), T)
    ==
      (e1Source&e1)

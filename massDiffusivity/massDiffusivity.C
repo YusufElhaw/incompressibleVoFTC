@@ -150,7 +150,7 @@ massDiffusivity::massDiffusivity
 
 
     Dm1_ = dimensionedScalar("Dm1", dimKinematicViscosity, dictPhase1.lookup("Dm"));
-    Dm2_ = dimensionedScalar("Dm1", dimKinematicViscosity, dictPhase2.lookup("Dm"));
+    Dm2_ = dimensionedScalar("Dm2", dimKinematicViscosity, dictPhase2.lookup("Dm"));
 
     Info<<"Read molecular Diffusivty of "<< phase1Name << " phase Dm: "
         << Dm1_.value() <<" "<<Dm1_.dimensions()<<endl;
@@ -217,52 +217,21 @@ massDiffusivity::massDiffusivity
 }
 tmp<volScalarField> massDiffusivity::DEff() const
 {
-    const fvMesh& mesh = mixture_.mesh();
+//    const fvMesh& mesh = mixture_.mesh();
 
-    tmp<volScalarField> tD1
-    (
-        new volScalarField
-        (
-            IOobject
-            (
-                "D1eff",
-                mesh.time().name(),
-                mesh,
-                IOobject::NO_READ,
-                IOobject::NO_WRITE
-            ),
-            mesh,
-            dimensionedScalar(dimKinematicViscosity, 0)   
-        )
-    );
-
-    tmp<volScalarField> tD2
-    (
-        new volScalarField
-        (
-            IOobject
-            (
-                "D2eff",
-                mesh.time().name(),
-                mesh,
-                IOobject::NO_READ,
-                IOobject::NO_WRITE
-            ),
-            mesh,
-            dimensionedScalar(dimKinematicViscosity, 0)   // [L^2/T]
-        )
-    );
+    volScalarField D1("D1", mixture_.alpha1()* Dm1_);
+    volScalarField D2("D2", mixture_.alpha2()* Dm2_);
 
     if (turb1_)
     {
-        tD1.ref() += turbulence_.turbulence1_->nut()/(Prt1_*Let1_); 
+        D1 += mixture_.alpha1()*turbulence_.turbulence1_->nut()/(Prt1_*Let1_);
     }
     if (turb2_)
     {
-        tD2.ref() += turbulence_.turbulence2_->nut()/(Prt2_*Let2_);
+        D2 += mixture_.alpha2()*turbulence_.turbulence2_->nut()/(Prt2_*Let2_);
     }
 
-    return mixture_.alpha1()*tD1 + mixture_.alpha2()*tD2; 
+    return D1 + D2;
 }
 
 
