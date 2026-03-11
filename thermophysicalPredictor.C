@@ -67,7 +67,7 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
    (
      fvm::ddt(rhoCpv, T)
    + fvm::div(rhoCpvPhi, T)
-   - fvm::Sp(fvc::ddt(rhoCpv) + fvc::div(rhoCpvPhi), T) //added for the stability by changes in rhoCp
+   - fvm::Sp(fvc::ddt(rhoCpv) + fvc::div(rhoCpvPhi), T)                       //added for the stability by changes in rhoCp
    - fvm::laplacian(thermophysicalTransport.kappaEff(), T)
    ==
      (e1Source&e1)

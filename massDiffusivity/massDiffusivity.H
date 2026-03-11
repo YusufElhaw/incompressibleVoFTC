@@ -74,6 +74,13 @@ class massDiffusivity
 public:
     massDiffusivity(const incompressibleInterPhaseTransportModelTC& turb);
 
+    tmp<volScalarField> D1Eff() const;
+    tmp<scalarField> D1Eff(const label patchi) const;
+
+    tmp<volScalarField> D2Eff() const;
+    tmp<scalarField> D2Eff(const label patchi) const;
+
+
     tmp<volScalarField> DEff() const;
     tmp<scalarField> DEff(const label patchi) const;
 };

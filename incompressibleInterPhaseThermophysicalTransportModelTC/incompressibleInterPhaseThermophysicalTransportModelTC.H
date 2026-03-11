@@ -119,10 +119,14 @@ public:
             //- Effective Mass turbulent conductivity
             //  of mixture [m^2/s]
             virtual tmp<volScalarField> DEff() const ;      // analog to a= alpha Temperaturleitfähigkeit 
+            virtual tmp<volScalarField> D1Eff() const ;      // analog to a= alpha Temperaturleitfähigkeit 
+            virtual tmp<volScalarField> D2Eff() const ;      // analog to a= alpha Temperaturleitfähigkeit 
 
            //- Effective turbulent Diffusion coeffcient
            //  of mixture for patch [m^2/s]
            virtual tmp<scalarField> DEff(const label patchi) const;
+           virtual tmp<scalarField> D1Eff(const label patchi) const;
+           virtual tmp<scalarField> D2Eff(const label patchi) const;
 
            
 //            //- Return the Mass flux [Mol/(m^2*s)]

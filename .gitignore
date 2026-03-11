@@ -1,4 +1,5 @@
 fvModels/
+Make/linux64GccDPInt32Opt/
 *.dep
 *.o
 Allwmake

@@ -238,6 +238,17 @@ Foam::incompressibleInterPhaseThermophysicalTransportModelTC::DEff() const
     return massDiffusivity_.DEff();
 }
 
+Foam::tmp<Foam::volScalarField>
+Foam::incompressibleInterPhaseThermophysicalTransportModelTC::D1Eff() const
+{
+    return massDiffusivity_.D1Eff();
+}
+
+Foam::tmp<Foam::volScalarField>
+Foam::incompressibleInterPhaseThermophysicalTransportModelTC::D2Eff() const
+{
+    return massDiffusivity_.D2Eff();
+}
 
 Foam::tmp<Foam::scalarField>
 Foam::incompressibleInterPhaseThermophysicalTransportModelTC::DEff
@@ -248,7 +259,23 @@ Foam::incompressibleInterPhaseThermophysicalTransportModelTC::DEff
    return massDiffusivity_.DEff(patchi);
 }
 
+Foam::tmp<Foam::scalarField>
+Foam::incompressibleInterPhaseThermophysicalTransportModelTC::D1Eff
+(
+    const label patchi
+) const
+{
+   return massDiffusivity_.D1Eff(patchi);
+}
 
+Foam::tmp<Foam::scalarField>
+Foam::incompressibleInterPhaseThermophysicalTransportModelTC::D2Eff
+(
+    const label patchi
+) const
+{
+   return massDiffusivity_.D2Eff(patchi);
+}
 void Foam::incompressibleInterPhaseThermophysicalTransportModelTC::predict()
 {}
 

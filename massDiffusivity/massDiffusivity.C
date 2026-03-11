@@ -215,46 +215,86 @@ massDiffusivity::massDiffusivity
     }
 
 }
-tmp<volScalarField> massDiffusivity::DEff() const
+tmp<volScalarField> massDiffusivity::D1Eff() const
 {
-//    const fvMesh& mesh = mixture_.mesh();
+ tmp<volScalarField> tD1
+    (
+        new volScalarField
+        (
+            "D1",
+            mixture_.alpha1()*Dm1_
+        )
+    );
 
-    volScalarField D1("D1", mixture_.alpha1()* Dm1_);
-    volScalarField D2("D2", mixture_.alpha2()* Dm2_);
+    volScalarField& D1 = tD1.ref();
 
     if (turb1_)
     {
         D1 += mixture_.alpha1()*turbulence_.turbulence1_->nut()/(Prt1_*Let1_);
     }
-    if (turb2_)
-    {
-        D2 += mixture_.alpha2()*turbulence_.turbulence2_->nut()/(Prt2_*Let2_);
-    }
 
-    return D1 + D2;
+    return tD1;
+
 }
 
-
-
-tmp<scalarField> massDiffusivity::DEff(const label patchi) const
+tmp<scalarField> massDiffusivity::D1Eff(const label patchi) const
 {
     const scalarField a1 = mixture_.alpha1().boundaryField()[patchi];
-    const scalarField a2 = mixture_.alpha2().boundaryField()[patchi];
-
     scalarField D1(a1.size(), Dm1_.value());
-    scalarField D2(a1.size(), Dm2_.value());
 
     if (turb1_)
     {
         D1 += turbulence_.turbulence1_->nut(patchi)/(Prt1_*Let1_);
     }
+
+    tmp<scalarField> t(new scalarField(a1*D1));
+    return t;
+}
+
+tmp<volScalarField> massDiffusivity::D2Eff() const
+{
+  tmp<volScalarField> tD2
+    (
+        new volScalarField
+        (
+            "D2",
+            mixture_.alpha2()*Dm2_
+        )
+    );
+
+    volScalarField& D2 = tD2.ref();
+
+    if (turb2_)
+    {
+        D2 += mixture_.alpha2()*turbulence_.turbulence2_->nut()/(Prt2_*Let2_);
+    }
+
+    return tD2;
+}
+
+tmp<scalarField> massDiffusivity::D2Eff(const label patchi) const
+{
+    const scalarField a2 = mixture_.alpha2().boundaryField()[patchi];
+    scalarField D2(a2.size(), Dm2_.value());
+
     if (turb2_)
     {
         D2 += turbulence_.turbulence2_->nut(patchi)/(Prt2_*Let2_);
     }
 
-    tmp<scalarField> t(new scalarField(a1*D1 + a2*D2));
+    tmp<scalarField> t(new scalarField(a2*D2));
     return t;
+}
+
+tmp<volScalarField> massDiffusivity::DEff() const
+{
+    return D1Eff() + D2Eff();
+}
+
+
+tmp<scalarField> massDiffusivity::DEff(const label patchi) const
+{
+    return D1Eff(patchi) + D2Eff(patchi);
 }
 
 } // End namespace Foam

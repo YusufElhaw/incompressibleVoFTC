@@ -37,21 +37,22 @@ License
 
 void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 {
- Info<< "compositionPredictor() called, Meldung from compositionPredictor.C " <<  nl;
+  Info<< "compositionPredictor() called, Meldung from compositionPredictor.C " <<  nl;
 
  // --- Phase densities from thermo (rhoConst -> still a volScalarField) ---
    const volScalarField& rho1(mixture.thermo1().rho());
    const volScalarField& rho2(mixture.thermo2().rho());
- 
+   //const volScalarField& rho(mixture.rho());
+   
  // --- Species mass-fraction fields (4 fields in 0/ and time/) ---
-   volScalarField& Y1p1 = mixture.s1Phase1();  // species1.phase1
-   volScalarField& Y2p1 = mixture.s2Phase1();  // species2.phase1
-   volScalarField& Y1p2 = mixture.s1Phase2();  // species1.phase2
-   volScalarField& Y2p2 = mixture.s2Phase2();  // species2.phase2
+   volScalarField& Y1L = mixture.s1Phase1();  // species1.Liquid
+   volScalarField& Y2L = mixture.s2Phase1();  // species2.Liquid
+   volScalarField& Y1G = mixture.s1Phase2();  // species1.Gas
+   volScalarField& Y2G = mixture.s2Phase2();  // species2.Gas
   // --- Species mol-weight ---
   const dimensionedScalar W1 = mixture.thermo1().Wi(0)/1e3;   // mol mass in kg
   const dimensionedScalar W2 = mixture.thermo1().Wi(1)/1e3;   // mol mass in kg
-  
+
   // bounded alphas (ALPHA is 0<=alpha<=1)
     // alphas smaller than aTol are set to 0   
     const scalar aTol = 1e-4; 
@@ -59,15 +60,33 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     volScalarField ALPHA1("ALPHA1",(scalar(1) - pos(aTol-a) - pos(a-(scalar(1)-aTol)))*a + pos(a-(scalar(1)-aTol)));
     volScalarField ALPHA2("ALPHA2", scalar(1) - ALPHA1);
 
-  // Reading/calculating the concentration fields of the species  
-    const word C1name = mixture.species1Name() + ".concentration";
-    const word C2name = mixture.species2Name() + ".concentration";
+  // Concentrations
+    volScalarField C1L("C1L", ALPHA1*(rho1/W1)*Y1L);
+    volScalarField C1G("C1G", ALPHA2*(rho2/W1)*Y1G);
+    volScalarField C2L("C2L", ALPHA1*(rho1/W2)*Y2L);
+    volScalarField C2G("C2G", ALPHA2*(rho2/W2)*Y2G);
+    
+    volScalarField C1 ("C1", C1L + C1G); // Concentration of Species 1  
+    volScalarField C2 ("C2", C2L + C2G); // Concentration of Species 2
+
+    volScalarField CL ("CL", C1L + C2L); // Concentration of the liquid phase
+    volScalarField CG ("CG", C1G + C2G); // Concentration of the gas phase
+
+    volScalarField C("C", C1 + C2); // total concentration Field
+  // mol fractions
+    volScalarField X1Calc ("X1Calc", C1/C);     // mole fraction of Species 1  
+    volScalarField X2Calc ("X2Calc", 1-X1Calc); // mole fraction of Species 2  
+   
+  // Reading/calculating the mol fractions fields of the species  
+    const word X1name = mixture.species1Name() + ".X";
+    const word X2name = mixture.species2Name() + ".X";
     
     // taking the boundarys from the Mass fraction of Species1 phase 1 
-    const wordList CpatchTypes = Y1p1.boundaryField().types();
-    
+    const wordList XpatchTypes = Y1L.boundaryField().types();
     // creating the concentration fields
-    if (!mesh.foundObject<volScalarField>(C1name))
+ Info<<"-3"<<endl;
+
+    if (!mesh.foundObject<volScalarField>(X1name))
     {
       mesh.objectRegistry::store
       (
@@ -75,20 +94,21 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
         (
           IOobject
           (
-            C1name,
+            X1name,
             mesh.time().name(),
             mesh,
             IOobject::READ_IF_PRESENT,
             IOobject::AUTO_WRITE
           ),
           mesh,
-          dimensionedScalar("C1", rho1.dimensions()/W1.dimensions(), 0.0)
-          ,CpatchTypes
+          dimensionedScalar("X1", dimless, 0.0)
+          ,XpatchTypes
         )
       );
     }
 
-    if (!mesh.foundObject<volScalarField>(C2name))
+ Info<<"-2"<<endl;
+    if (!mesh.foundObject<volScalarField>(X2name))
     {
       mesh.objectRegistry::store
       (
@@ -96,101 +116,94 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
         (
           IOobject
           (
-            C2name,
+            X2name,
             mesh.time().name(),
             mesh,
             IOobject::READ_IF_PRESENT,
             IOobject::AUTO_WRITE
           ),
           mesh,
-          dimensionedScalar("C2", rho2.dimensions()/W2.dimensions(), 0.0)
-          ,CpatchTypes
+          dimensionedScalar("X2", dimless, 0.0)
+          ,XpatchTypes
         )
       );
-    }
-  
-    volScalarField& C1 = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>(C1name));
-    volScalarField& C2 = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>(C2name));
-    
-      // saving the BC for fixed Value with the value calculated from the mass fractions 
-      volScalarField C1p1("C1p1", ALPHA1*(rho1/W1)*Y1p1);
-      volScalarField C1p2("C1p2", ALPHA2*(rho2/W1)*Y1p2);
-      volScalarField C2p1("C2p1", ALPHA1*(rho1/W2)*Y2p1);
-      volScalarField C2p2("C2p2", ALPHA2*(rho2/W2)*Y2p2);
+    }   
+   
+    Info<<"-1"<<endl;
+    volScalarField& X1 = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>(X1name));
+    volScalarField& X2 = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>(X2name));
 
-      volScalarField C1calc ("C1calc", C1p1 + C1p2);
-      volScalarField C2calc ("C2calc", C2p1 + C2p2);
+    static bool XinitDone = false;
+    Info<<"0"<<endl;
+   
 
-      // internal immer setzen
-      C1.internalFieldRef() = C1calc.internalField();
-      C2.internalFieldRef() = C2calc.internalField();
-      // NUR fixedValue-Patches setzen (Wert aus Ccalc übernehmen)
-      forAll(C1.boundaryField(), patchi)
-      {
-        if (C1.boundaryField()[patchi].type() == "fixedValue")
+    if (!XinitDone)
+    {
+        static word startTimeName;
+        const scalar tStart = runTime.startTime().value();
+        startTimeName = Time::timeName(tStart, 6);
+
+        IOobject X1h(X1name, startTimeName, mesh, IOobject::READ_IF_PRESENT, IOobject::NO_WRITE);
+        IOobject X2h(X2name, startTimeName, mesh, IOobject::READ_IF_PRESENT, IOobject::NO_WRITE);
+
+        if (X1h.headerOk())
         {
-          C1.boundaryFieldRef()[patchi] == C1calc.boundaryField()[patchi];
-        }
-      }
-
-      forAll(C2.boundaryField(), patchi)
-      {
-        if (C2.boundaryField()[patchi].type() == "fixedValue")
-        {
-          C2.boundaryFieldRef()[patchi] == C2calc.boundaryField()[patchi];
-        }
-      }
-      C1.correctBoundaryConditions();
-      C2.correctBoundaryConditions();
-
-    // intialisation of C Fields only once 
-      // read C Fields, if found in the Time-Folder to be started with
-      // if C Fields not found, calculate them based on mass fractions
-      static bool CinitDone = false;  // intialisation is not done
-
-      if (!CinitDone)
-      {      
-        static word startTimeName;  
-        const scalar tStart = runTime.startTime().value();   // Start time from controlDict
-        startTimeName = Time::timeName(tStart, 6);           // Precision: 6
-
-        IOobject C1h(C1name, startTimeName, mesh, IOobject::READ_IF_PRESENT, IOobject::NO_WRITE);
-        IOobject C2h(C2name, startTimeName, mesh, IOobject::READ_IF_PRESENT, IOobject::NO_WRITE);
-
-        if (C1h.headerOk())
-        {
-          volScalarField C1read
+          volScalarField X1read
           (
-            IOobject(C1name, startTimeName, mesh, IOobject::MUST_READ, IOobject::NO_WRITE),
-            mesh
-          );
-          C1 = C1read;   // copy values into existing field
-          Info<<C1name<<" read from the "<< startTimeName << " folder."<<endl;
-        }
-        else
-        {
-          C1 = C1p1 + C1p2;
-          Info<<C1name<<" calculated from the mass fractions of "<<startTimeName <<" folder."<<endl;
-        }
-
-        if (C2h.headerOk())
-        {
-          volScalarField C2read
-          (
-              IOobject(C2name, startTimeName, mesh, IOobject::MUST_READ, IOobject::NO_WRITE),
+              IOobject(X1name, startTimeName, mesh, IOobject::MUST_READ, IOobject::NO_WRITE),
               mesh
           );
-          C2 = C2read;
-          Info<<C2name<<" read from the "<< startTimeName << " folder."<<endl;
+          X1 = X1read;
+          Info<< X1name << " read from the " << startTimeName << " folder." << endl;
         }
         else
         {
-          C2 = C2p1 + C2p2;
-          Info<<C2name<<" calculated from the mass fractions of "<<startTimeName <<" folder."<<endl;
+          X1.internalFieldRef() = X1Calc.internalField();
+      
+          X1.correctBoundaryConditions();
+          Info<< X1name << " calculated from the mass fractions of "
+                << startTimeName << " folder." << endl;
         }
-        CinitDone = true;   // intialisation is done
-      }
 
+        if (X2h.headerOk())
+        {
+          volScalarField X2read
+          (
+              IOobject(X2name, startTimeName, mesh, IOobject::MUST_READ, IOobject::NO_WRITE),
+              mesh
+          );
+          X2 = X2read;
+          Info<< X2name << " read from the " << startTimeName << " folder." << endl;
+        }
+        else
+        {
+          X2.internalFieldRef() = X2Calc.internalField();
+          
+          X2.correctBoundaryConditions();
+          Info<< X2name << " calculated from the mass fractions of "
+                << startTimeName << " folder." << endl;
+        }
+
+        X1.correctBoundaryConditions();
+        X2.correctBoundaryConditions();
+
+        XinitDone = true;
+    }
+    forAll(X1.boundaryField(), patchi)
+          {
+              if (X1.boundaryField()[patchi].type() == "fixedValue")
+              {
+                X1.boundaryFieldRef()[patchi] == X1Calc.boundaryField()[patchi]; 
+              }
+          }
+
+    forAll(X2.boundaryField(), patchi)
+          {
+              if (X2.boundaryField()[patchi].type() == "fixedValue")
+              {
+                X2.boundaryFieldRef()[patchi] == X2Calc.boundaryField()[patchi]; 
+              }
+          }
   // VLE constant 
     const volScalarField& T = mixture.T();
 
@@ -224,108 +237,129 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
             )
         );
     }
-    // K1 = K_Raoult * (C_gas/C_liquid) 
-      //if the liquid phase is absent, C_liq=0 => dont devide by 0 
-      // Dummy value of division by 1e3 causes no Problem because K1 & K2 only work on mixed cells
-      const dimensionedScalar noDivBy0("noDivBy0", C1p1.dimensions(), 1 );
-     
-      volScalarField K1("K1", vle1Ptr->K(p, T) /* *  (C1p2+C2p2)/max((C1p1+C2p1), noDivBy0)*/);
-      volScalarField K2("K2", vle2Ptr->K(p, T) /* *  (C1p2+C2p2)/max((C1p1+C2p1), noDivBy0)*/);
+    volScalarField K1eq("K1eq", vle1Ptr->K(p, T));
+    volScalarField K2eq("K2eq", vle2Ptr->K(p, T));
 
-      Info<<"Relative volatility min / max = "<<min(K1/K2).value()<<" / "<<max(K1/K2).value()<<endl;
+    // relative volatility A_ij = K1eq/K2eq
+    volScalarField A12("A12", K1eq/K2eq);
 
-  // Diffusivity D_j (Start: alpha-gewichtet -erstamliger Wert) // to be changed
- 
-    volScalarField tDEff =  thermophysicalTransport.DEff();
- 
-  // Solver for C-Equations
-    // Eq.10: Phi_j = -D * [ C(1-K)/(alpha1 + K*alpha2) ] grad(alpha1) // doi:10.1016/j.ces.2010.01.012
-      volScalarField fraction1(C1*(scalar(1) - K1)/(ALPHA1 + K1*ALPHA2));
-      volScalarField fraction2(C2*(scalar(1) - K2)/(ALPHA1 + K2*ALPHA2));
- 
-      volVectorField Phi1("Phi1", -tDEff*fraction1*fvc::grad(ALPHA1));
-      volVectorField Phi2("Phi2", -tDEff*fraction2*fvc::grad(ALPHA1));  
-    //  Info<<"Der K1Raoult beträgt :"<<vle1Ptr->K(p, T)()<<endl;
-    //  Info<<"Der K1 beträgt :"<<K1()<<endl;
-    //  Info<<"Der tDEff beträgt :"<<fvm::laplacian(tDEff, C2)<<endl;
-    //  Info<<"Der Phi1 beträgt :"<<fvc::div(Phi1)<<endl;
- 
-    // Eq.9 :
-    // ddt(C) + div(phi,C)  =  laplacian(D,C)+ div(Phi) // doi:10.1016/j.ces.2010.01.012
-      fvScalarMatrix C1Eqn
-      (
-          fvm::ddt(C1)
-        + fvm::div(phi, C1)
-        ==
-          fvm::laplacian(tDEff, C1)
-        + fvc::div(Phi1) 
-      );
-
-      fvScalarMatrix C2Eqn
-      (
-          fvm::ddt(C2)
-        + fvm::div(phi, C2)
-        ==
-          fvm::laplacian(tDEff, C2)
-        + fvc::div(Phi2)
-      );
-
-      C1Eqn.relax(); fvConstraints().constrain(C1Eqn); C1Eqn.solve(/*mesh.solution().solverDict(C1.name())*/);
-      C2Eqn.relax(); fvConstraints().constrain(C2Eqn); C2Eqn.solve(/*mesh.solution().solverDict(C2.name())*/);
-      if (runTime.writeTime()) // writing the C-Fields for the writeTime
-      {
-          C1.write();
-          C2.write();
-      }
+    Info<<"Relative volatility min / max = "<< min(A12).value()
+          << " / " << max(A12).value() << endl;
     
-  // back substitution in Y with CiWi/sum(CjWj)
-        
-    // seperate between cells with pure phases and cells with mixed phases  
-      volScalarField alpha1_pure("alpha1_pure", pos(ALPHA1 - (scalar(1) - aTol)));  // only cells with pure phases, mixed cells 0
-      volScalarField alpha2_pure("alpha2_pure", pos(ALPHA2 - (scalar(1) - aTol)));  // only cells with pure phases, mixed cells 0 
-      volScalarField alpha1_mix("alpha1_mix"  , pos(ALPHA1 - alpha1_pure)*(ALPHA1 - alpha1_pure)); // alpha1 for mixed cells, 0 for pure cells
-      volScalarField alpha2_mix("alpha2_mix"  , pos(ALPHA2 - alpha2_pure)*(ALPHA2 - alpha2_pure)); // alpha2 for mixed cells, 0 for pure cells
-      volScalarField Is_mix_Cell("Is_mix_Cell", pos(ALPHA1 - aTol)*pos(ALPHA2 - aTol)); // gives 1 for mix cells,
+    volScalarField Kgcst("Kgcst",A12/(1+(A12-1)*X1));
+
+    // ---------------------------------------------------------------------
+    // Eq. (6.19)
+    // ---------------------------------------------------------------------
+    volScalarField fractionL("fractionL", (ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
+    volScalarField fractionG("fractionG", Kgcst*(ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
+
+    volScalarField Mmix("Mmix", ALPHA1*CL + ALPHA2*CG);
+    volScalarField denomenatorGCST("denomenatorGCST", ALPHA1*CL + Kgcst*ALPHA2*CG);
+
+   // volScalarField XiL("XiL", X1*fraction);
+   // volScalarField XiG("XiG", Kgcst*X1*fraction);
+
+    surfaceScalarField Cphi("Cphi", phi*fvc::interpolate(C));
+    Info<<"1"<<endl;
+
+    volScalarField D1Eff("D1Eff", ALPHA1*CL*thermophysicalTransport.D1Eff());
+    volScalarField D2Eff("D2Eff", ALPHA2*CG*thermophysicalTransport.D2Eff());
+
+    Info<<"2"<<endl;
+    //Info<<"fvc::grad(fractionL*X1)"<<fvc::grad(fractionL*X1)<<endl;
+    //Info<<"D1Eff"<<D1Eff<<endl;
+    //Info<<"fvc::div(D1Eff * fvc::grad(fractionL*X1))"<<fvc::div(D1Eff * fvc::grad(fractionL*X1))<<endl;
+
+    volScalarField D1fL("D1fL", D1Eff * fractionL);
+    volScalarField D2fG("D2fG", D2Eff * fractionG);
+
+    fvScalarMatrix X1Eqn
+    (
+        fvm::ddt(C, X1)
+      + fvm::div(Cphi, X1)
+      ==
+        fvm::laplacian(D1fL, X1)
+      + fvm::laplacian(D2fG, X1)
+    );
+
+    Info<<"3"<<endl;
+
+    X1Eqn.relax();
+    fvConstraints().constrain(X1Eqn);
+    X1Eqn.solve();
+
+    X1 = min(max(X1, scalar(0)), scalar(1));
+    X2 = scalar(1) - X1;
+
+    X1.correctBoundaryConditions();
+    X2.correctBoundaryConditions();
+    Info<<"4"<<endl;
+
+    if (runTime.writeTime())
+    {
+        X1.write();
+        X2.write();
+    }
+
+    // ---------------------------------------------------------------------
+    // back-substitution to  mass fractions
+    // ---------------------------------------------------------------------
+    Info<<"5"<<endl;
+   
+    volScalarField ALPHA1_pure("ALPHA1_pure", pos(ALPHA1 - (scalar(1) - aTol)));  // only cells with pure phases, mixed cells 0
+    volScalarField ALPHA2_pure("ALPHA2_pure", pos(ALPHA2 - (scalar(1) - aTol)));  // only cells with pure phases, mixed cells 0 
+    volScalarField ALPHA1_mix("ALPHA1_mix"  , pos(ALPHA1 - ALPHA1_pure)*(ALPHA1 - ALPHA1_pure)); // alpha1 for mixed cells 
+    volScalarField ALPHA2_mix("ALPHA2_mix"  , pos(ALPHA2 - ALPHA2_pure)*(ALPHA2 - ALPHA2_pure)); // alpha2 for mixed cells 
+    volScalarField Is_mix_Cell("Is_mix_Cell", pos(ALPHA1 - aTol)*pos(ALPHA2 - aTol)); // gives 1 for mix cells,
+    Info<<"6"<<endl;
     
-    // cells of pure phases  
-      volScalarField Y1p1_pure("Y1p1_pure", alpha1_pure*C1*W1/(C1*W1+C2*W2));   // gives Y1p1 where alpha1 =1, everywhere else (0 as Dummy)
-      volScalarField Y2p1_pure("Y2p1_pure", 1-Y1p1_pure);                       // gives Y2p1 where alpha1 =1, everywhere else (1 as Dummy)
-      volScalarField Y2p2_pure("Y2p2_pure", alpha2_pure*C2*W2/(C1*W1+C2*W2));   // gives Y2p2 where alpha2 =1, everywhere else (0 as Dummy)
-      volScalarField Y1p2_pure("Y1p2_pure", 1-Y2p2_pure);                       // gives Y1p2 where alpha2 =1, everywhere else (1 as Dummy)
+    const dimensionedScalar denomMin ("denomMin",W1.dimensions(), SMALL);
     
+    volScalarField Y1L_pure("Y1L_pure", ALPHA1_pure*X1*W1/max((X1*W1+X2*W2),denomMin));   // gives Y1L where alpha1 =1, everywhere else (0 as Dummy)
+    volScalarField Y2L_pure("Y2L_pure", 1-Y1L_pure);                       // gives Y2L where alpha1 =1, everywhere else (1 as Dummy)
+    volScalarField Y2G_pure("Y2G_pure", ALPHA2_pure*X2*W2/max((X1*W1+X2*W2),denomMin));   // gives Y2G where alpha2 =1, everywhere else (0 as Dummy)
+    volScalarField Y1G_pure("Y1G_pure", 1-Y2G_pure);                       // gives Y1G where alpha2 =1, everywhere else (1 as Dummy)
+
+    const dimensionedScalar denomMinC ("denomMin",C.dimensions(), SMALL);
+    
+    Info<<"7"<<endl;
+
     // cells of mixed phases (2-film Model -> Vapour liquid equilibrium on these cells)
     // concentration of the species for each phase
-      volScalarField C1p1_mix("C1p1_mix",   Is_mix_Cell*(C1/max(alpha1_mix+K1*alpha2_mix, SMALL))); // Protection devision by 0 for the pure cells 
-      volScalarField C1p2_mix("C1p2_mix",   K1*C1p1_mix);
-      volScalarField C2p1_mix("C2p1_mix",   Is_mix_Cell*(C2/max(alpha1_mix+K2*alpha2_mix, SMALL))); // Protection devision by 0 for the pure cells
-      volScalarField C2p2_mix("C2p2_mix",   K2*C2p1_mix);
+      volScalarField X1L=X1*(ALPHA1_mix*CL+ALPHA2_mix*CG)/max((ALPHA1_mix*CL+Kgcst*ALPHA2_mix*CG), denomMinC);
+      volScalarField X1G=X1L*Kgcst;
+      volScalarField X2L=Is_mix_Cell*(1-X1L);
+      volScalarField X2G=Is_mix_Cell*(1-X1G);
+    Info<<"8"<<endl;
+    const dimensionedScalar denomMinW ("denomMin",W1.dimensions(), SMALL);
+
     // Mass fraction of the mixed phases
-      volScalarField Y1p1_mix("Y1p1_mix",   alpha1_mix*C1p1_mix*W1/(C1*W1+C2*W2));
-      volScalarField Y1p2_mix("Y1p2_mix",   alpha2_mix*C1p2_mix*W1/(C1*W1+C2*W2));
-      volScalarField Y2p1_mix("Y2p1_mix",   alpha1_mix*C2p1_mix*W2/(C1*W1+C2*W2));
-      volScalarField Y2p2_mix("Y2p2_mix",   alpha2_mix*C2p2_mix*W2/(C1*W1+C2*W2));
+      volScalarField Y1L_mix("Y1L_mix",   Is_mix_Cell*X1L*W1/max((X1L*W1+X2L*W2),denomMinW));
+      volScalarField Y1G_mix("Y1G_mix",   Is_mix_Cell*X1G*W1/max((X1G*W1+X2G*W2),denomMinW));
+      volScalarField Y2L_mix("Y2L_mix",   Is_mix_Cell*(1-Y1L_mix));
+      volScalarField Y2G_mix("Y2G_mix",   Is_mix_Cell*(1-Y1G_mix));
+    Info<<"9"<<endl;
 
-//
+
     // Piecewise assembly
-      // Y1p1 and Y2p2 have all the Field their real Values
-      // Y2p1 and Y1p2 have 1 in cells, where their phases does not exist, as a Dummy-value
-      // Y2p1 and Y1p2 have in the rest of the cells their real values
-      Y1p1 = Y1p1_pure + Y1p1_mix ;                                 
-      Y2p1 = Y2p1_pure + Y2p1_mix - Is_mix_Cell;      // subtraction of the Dummy 1 in the Y2p1_pure in the mix cells 
-      Y1p2 = Y1p2_pure + Y1p2_mix - Is_mix_Cell;      // subtraction of the Dummy 1 in the Y1p2_pure in the mix cells
-      Y2p2 = Y2p2_pure + Y2p2_mix;                                  
-  
-     // Info<<"the massfractions of Y1p1 are : "<<Y1p1<<nl<<endl;
-     // Info<<"the massfractions of Y2p1 are : "<<Y2p1<<nl<<endl;
-     // Info<<"the massfractions of Y1p2 are : "<<Y1p2<<nl<<endl;
-     // Info<<"the massfractions of Y2p2 are : "<<Y2p2<<nl<<endl;
-      // correct boundary conditions
-    Y1p1.correctBoundaryConditions();
-    Y2p1.correctBoundaryConditions();
-    Y1p2.correctBoundaryConditions();
-    Y2p2.correctBoundaryConditions();
+      // Y1L and Y2G have all the Field their real Values
+      // Y2L and Y1G have 1 in cells, where their phases does not exist, as a Dummy-value
+     // Y2L and Y1G have in the rest of the cells their real values
+     Y1L = Y1L_pure + Y1L_mix ;                   // has a dummy of 1 in the pure Gas cells              
+     Y2L = Y2L_pure + Y2L_mix - Is_mix_Cell;      // subtraction of the Dummy 1 in the Y2L_pure in the mix cells 
+     Y1G = Y1G_pure + Y1G_mix - Is_mix_Cell;      // subtraction of the Dummy 1 in the Y1G_pure in the mix cells
+     Y2G = Y2G_pure + Y2G_mix;                    // has a dummy of 1 in the pure Liquid cells   
+    Info<<"10"<<endl;
 
-   
+
+
+    Y1L.correctBoundaryConditions();
+    Y2L.correctBoundaryConditions();
+    Y1G.correctBoundaryConditions();
+    Y2G.correctBoundaryConditions();
+
+  
   // Push mass-fractions into thermo objects + update derived properties
     mixture.correctComposition();
    // mixture.correctThermo();
