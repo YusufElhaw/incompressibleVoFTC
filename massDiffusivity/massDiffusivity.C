@@ -24,6 +24,7 @@ License
 \*---------------------------------------------------------------------------*/
 #include "massDiffusivity.H"
 #include "fvMesh.H"
+#include "addToRunTimeSelectionTable.H"
 
 namespace Foam
 {
@@ -117,7 +118,26 @@ bool massDiffusivity::checkPhaseTurbulence(const word& phaseName) const
     }
     
 }
+void massDiffusivity::updateD1Eff() const
+{
+    D1Eff_ = Dm1_;
 
+    if (turb1_)
+    {
+        D1Eff_ += turbulence_.turbulence1_->nut()/(Prt1_*Let1_);
+    }
+}
+
+
+void massDiffusivity::updateD2Eff() const
+{
+    D2Eff_ = Dm2_;
+
+    if (turb2_)
+    {
+        D2Eff_ += turbulence_.turbulence2_->nut()/(Prt2_*Let2_);
+    }
+}
 // * * * * * * * * * * * * * * * constructor * * * * * * * * * * * * * * * * //
 
 massDiffusivity::massDiffusivity
@@ -138,7 +158,34 @@ massDiffusivity::massDiffusivity
     Let2_(1.0),
 
     turb1_(false),
-    turb2_(false)
+    turb2_(false),
+    D1Eff_
+    (
+        IOobject
+        (
+            "D1Eff",
+            mixture_.mesh().time().name(),
+            mixture_.mesh(),
+            IOobject::NO_READ,
+            IOobject::NO_WRITE
+        ),
+        mixture_.mesh(),
+        dimensionedScalar("zero", dimKinematicViscosity, 0)
+    ),
+    D2Eff_
+    (
+        IOobject
+        (
+            "D2Eff",
+            mixture_.mesh().time().name(),
+            mixture_.mesh(),
+            IOobject::NO_READ,
+            IOobject::NO_WRITE
+        ),
+        mixture_.mesh(),
+        dimensionedScalar("zero", dimKinematicViscosity, 0)
+    )
+
 {   
     // phase names from mixture
     const word& phase1Name = mixture_.phase1Name();
@@ -215,86 +262,81 @@ massDiffusivity::massDiffusivity
     }
 
 }
+
+// * * * * * * * * * * * * * * member functions  * * * * * * * * * * * * * //
+
 tmp<volScalarField> massDiffusivity::D1Eff() const
 {
- tmp<volScalarField> tD1
-    (
-        new volScalarField
-        (
-            "D1",
-            mixture_.alpha1()*Dm1_
-        )
-    );
-
-    volScalarField& D1 = tD1.ref();
-
-    if (turb1_)
-    {
-        D1 += mixture_.alpha1()*turbulence_.turbulence1_->nut()/(Prt1_*Let1_);
-    }
-
-    return tD1;
-
+    updateD1Eff();
+    return D1Eff_;
 }
 
 tmp<scalarField> massDiffusivity::D1Eff(const label patchi) const
 {
-    const scalarField a1 = mixture_.alpha1().boundaryField()[patchi];
-    scalarField D1(a1.size(), Dm1_.value());
+    tmp<scalarField> tD1
+    (
+        new scalarField
+        (
+            mixture_.mesh().boundary()[patchi].size(),
+            Dm1_.value()
+        )
+    );
+
+    scalarField& D1 = tD1.ref();
 
     if (turb1_)
     {
         D1 += turbulence_.turbulence1_->nut(patchi)/(Prt1_*Let1_);
     }
 
-    tmp<scalarField> t(new scalarField(a1*D1));
-    return t;
+    return tD1;
 }
 
 tmp<volScalarField> massDiffusivity::D2Eff() const
 {
-  tmp<volScalarField> tD2
-    (
-        new volScalarField
-        (
-            "D2",
-            mixture_.alpha2()*Dm2_
-        )
-    );
-
-    volScalarField& D2 = tD2.ref();
-
-    if (turb2_)
-    {
-        D2 += mixture_.alpha2()*turbulence_.turbulence2_->nut()/(Prt2_*Let2_);
-    }
-
-    return tD2;
+    updateD2Eff();
+    return D2Eff_;
 }
 
 tmp<scalarField> massDiffusivity::D2Eff(const label patchi) const
 {
-    const scalarField a2 = mixture_.alpha2().boundaryField()[patchi];
-    scalarField D2(a2.size(), Dm2_.value());
+    tmp<scalarField> tD2
+    (
+        new scalarField
+        (
+            mixture_.mesh().boundary()[patchi].size(),
+            Dm2_.value()
+        )
+    );
+
+    scalarField& D2 = tD2.ref();
 
     if (turb2_)
     {
         D2 += turbulence_.turbulence2_->nut(patchi)/(Prt2_*Let2_);
     }
 
-    tmp<scalarField> t(new scalarField(a2*D2));
-    return t;
+    return tD2;
 }
 
 tmp<volScalarField> massDiffusivity::DEff() const
-{
-    return D1Eff() + D2Eff();
+{   
+    updateD1Eff();
+    updateD2Eff();
+
+    return
+        mixture_.alpha1()*D1Eff_
+      + mixture_.alpha2()*D2Eff_;
+
 }
 
 
 tmp<scalarField> massDiffusivity::DEff(const label patchi) const
-{
-    return D1Eff(patchi) + D2Eff(patchi);
+{   
+    const scalarField a1 = mixture_.alpha1().boundaryField()[patchi];
+    const scalarField a2 = mixture_.alpha2().boundaryField()[patchi];
+
+    return a1*D1Eff(patchi) + a2*D2Eff(patchi);
 }
 
 } // End namespace Foam

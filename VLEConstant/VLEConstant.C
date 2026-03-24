@@ -139,6 +139,8 @@ tmp<volScalarField> VLEConstant::pSat(const volScalarField& T) const
     return tpSat*1e5; // converts pSat from bar to pascal 
 }
 
+// future Work: Methode K to be changed, may be by overloading, after implemnting the fugacity, Poynting or activity
+//              so that a choose between the thermodynamic models be enabled (at best in the constant/VLEProperties document) 
 tmp<volScalarField> VLEConstant::K(const volScalarField& p, const volScalarField& T) const
 {
     tmp<volScalarField> tpSat = this->pSat(T);

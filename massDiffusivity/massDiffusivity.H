@@ -64,12 +64,18 @@ class massDiffusivity
 
     //  turbulence per-phase flags (read once)
     bool turb1_, turb2_;
+    
+    mutable volScalarField D1Eff_;
+    mutable volScalarField D2Eff_;
 
     // dictionaries (cached in registry)
     const IOdictionary& readThermophysicalTransportDict(const word& phaseName) const;
     
     // checking from momentumTransport both Phases for turbulence
     bool checkPhaseTurbulence(const word& phaseName) const;
+
+    void updateD1Eff() const;
+    void updateD2Eff() const;
 
 public:
     massDiffusivity(const incompressibleInterPhaseTransportModelTC& turb);

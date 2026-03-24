@@ -152,6 +152,8 @@ public:
     // pSat(T) fields
     tmp<volScalarField> pSat(const volScalarField& T) const;
 
+    // future work: Methode K to be changed, may be by overloading, after implemnting the fugacity, Poynting or activity
+    //              so that a choose between the thermodynamic models be enabled (at best in the constant/VLEProperties document) 
     // K = pSat/p (Raoult, idealised: gamma=phiL=phiG=Poy=1)
     tmp<volScalarField> K(const volScalarField& p, const volScalarField& T) const;
 

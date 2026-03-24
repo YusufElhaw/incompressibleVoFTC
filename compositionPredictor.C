@@ -39,19 +39,19 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 {
   Info<< "compositionPredictor() called, Meldung from compositionPredictor.C " <<  nl;
 
- // --- Phase densities from thermo (rhoConst -> still a volScalarField) ---
-   const volScalarField& rho1(mixture.thermo1().rho());
-   const volScalarField& rho2(mixture.thermo2().rho());
-   //const volScalarField& rho(mixture.rho());
+  // --- Phase densities from thermo (rhoConst -> still a volScalarField) ---
+    const volScalarField& rho1(mixture.thermo1().rho());
+    const volScalarField& rho2(mixture.thermo2().rho());
+    //const volScalarField& rho(mixture.rho());
    
- // --- Species mass-fraction fields (4 fields in 0/ and time/) ---
-   volScalarField& Y1L = mixture.s1Phase1();  // species1.Liquid
-   volScalarField& Y2L = mixture.s2Phase1();  // species2.Liquid
-   volScalarField& Y1G = mixture.s1Phase2();  // species1.Gas
-   volScalarField& Y2G = mixture.s2Phase2();  // species2.Gas
+  // --- Species mass-fraction fields (4 fields in 0/ and time/) ---
+    volScalarField& Y1L = mixture.s1Phase1();  // species1.Liquid
+    volScalarField& Y2L = mixture.s2Phase1();  // species2.Liquid
+    volScalarField& Y1G = mixture.s1Phase2();  // species1.Gas
+    volScalarField& Y2G = mixture.s2Phase2();  // species2.Gas
   // --- Species mol-weight ---
-  const dimensionedScalar W1 = mixture.thermo1().Wi(0)/1e3;   // mol mass in kg
-  const dimensionedScalar W2 = mixture.thermo1().Wi(1)/1e3;   // mol mass in kg
+    const dimensionedScalar W1 = mixture.thermo1().Wi(0)/1e3;   // mol mass in kg
+    const dimensionedScalar W2 = mixture.thermo1().Wi(1)/1e3;   // mol mass in kg
 
   // bounded alphas (ALPHA is 0<=alpha<=1)
     // alphas smaller than aTol are set to 0   
@@ -83,127 +83,124 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     
     // taking the boundarys from the Mass fraction of Species1 phase 1 
     const wordList XpatchTypes = Y1L.boundaryField().types();
+    
     // creating the concentration fields
- Info<<"-3"<<endl;
-
-    if (!mesh.foundObject<volScalarField>(X1name))
-    {
-      mesh.objectRegistry::store
-      (
-        new volScalarField
+      if (!mesh.foundObject<volScalarField>(X1name))
+      {
+        mesh.objectRegistry::store
         (
-          IOobject
+          new volScalarField
           (
-            X1name,
-            mesh.time().name(),
+            IOobject
+            (
+              X1name,
+              mesh.time().name(),
+              mesh,
+              IOobject::READ_IF_PRESENT,
+              IOobject::AUTO_WRITE
+            ),
             mesh,
-            IOobject::READ_IF_PRESENT,
-            IOobject::AUTO_WRITE
-          ),
-          mesh,
-          dimensionedScalar("X1", dimless, 0.0)
-          ,XpatchTypes
-        )
-      );
-    }
+            dimensionedScalar("X1", dimless, 0.0)
+            ,XpatchTypes
+          )
+        );
+      }
 
- Info<<"-2"<<endl;
-    if (!mesh.foundObject<volScalarField>(X2name))
-    {
-      mesh.objectRegistry::store
-      (
-        new volScalarField
+      if (!mesh.foundObject<volScalarField>(X2name))
+      {
+        mesh.objectRegistry::store
         (
-          IOobject
+          new volScalarField
           (
-            X2name,
-            mesh.time().name(),
+            IOobject
+            (
+              X2name,
+              mesh.time().name(),
+              mesh,
+              IOobject::READ_IF_PRESENT,
+              IOobject::AUTO_WRITE
+            ),
             mesh,
-            IOobject::READ_IF_PRESENT,
-            IOobject::AUTO_WRITE
-          ),
-          mesh,
-          dimensionedScalar("X2", dimless, 0.0)
-          ,XpatchTypes
-        )
-      );
-    }   
+            dimensionedScalar("X2", dimless, 0.0)
+            ,XpatchTypes
+          )
+        );
+      }   
    
-    Info<<"-1"<<endl;
-    volScalarField& X1 = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>(X1name));
-    volScalarField& X2 = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>(X2name));
+      volScalarField& X1 = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>(X1name));
+      volScalarField& X2 = const_cast<volScalarField&>(mesh.lookupObject<volScalarField>(X2name));
+    //the value of the mole fraction for the first itiration 
+    // read it if found in the folder of the start time or calculate it from the mass frations
+      static bool XinitDone = false;
+    
+      if (!XinitDone)
+      {
+          static word startTimeName;
+          const scalar tStart = runTime.startTime().value();
+          startTimeName = Time::timeName(tStart, 6);
 
-    static bool XinitDone = false;
-    Info<<"0"<<endl;
-   
+          IOobject X1h(X1name, startTimeName, mesh, IOobject::READ_IF_PRESENT, IOobject::NO_WRITE);
+          IOobject X2h(X2name, startTimeName, mesh, IOobject::READ_IF_PRESENT, IOobject::NO_WRITE);
 
-    if (!XinitDone)
-    {
-        static word startTimeName;
-        const scalar tStart = runTime.startTime().value();
-        startTimeName = Time::timeName(tStart, 6);
+          if (X1h.headerOk())
+          {
+            volScalarField X1read
+            (
+                IOobject(X1name, startTimeName, mesh, IOobject::MUST_READ, IOobject::NO_WRITE),
+                mesh
+            );
+            X1 = X1read;
+            Info<< X1name << " read from the " << startTimeName << " folder." << endl;
+          }
+          else
+          {
+            X1.internalFieldRef() = X1Calc.internalField();
+        
+            X1.correctBoundaryConditions();
+            Info<< X1name << " calculated from the mass fractions of "
+                  << startTimeName << " folder." << endl;
+          }
 
-        IOobject X1h(X1name, startTimeName, mesh, IOobject::READ_IF_PRESENT, IOobject::NO_WRITE);
-        IOobject X2h(X2name, startTimeName, mesh, IOobject::READ_IF_PRESENT, IOobject::NO_WRITE);
+          if (X2h.headerOk())
+          {
+            volScalarField X2read
+            (
+                IOobject(X2name, startTimeName, mesh, IOobject::MUST_READ, IOobject::NO_WRITE),
+                mesh
+            );
+            X2 = X2read;
+            Info<< X2name << " read from the " << startTimeName << " folder." << endl;
+          }
+          else
+          {
+            X2.internalFieldRef() = X2Calc.internalField();
+            
+            X2.correctBoundaryConditions();
+            Info<< X2name << " calculated from the mass fractions of "
+                  << startTimeName << " folder." << endl;
+          }
 
-        if (X1h.headerOk())
-        {
-          volScalarField X1read
-          (
-              IOobject(X1name, startTimeName, mesh, IOobject::MUST_READ, IOobject::NO_WRITE),
-              mesh
-          );
-          X1 = X1read;
-          Info<< X1name << " read from the " << startTimeName << " folder." << endl;
-        }
-        else
-        {
-          X1.internalFieldRef() = X1Calc.internalField();
-      
           X1.correctBoundaryConditions();
-          Info<< X1name << " calculated from the mass fractions of "
-                << startTimeName << " folder." << endl;
-        }
-
-        if (X2h.headerOk())
-        {
-          volScalarField X2read
-          (
-              IOobject(X2name, startTimeName, mesh, IOobject::MUST_READ, IOobject::NO_WRITE),
-              mesh
-          );
-          X2 = X2read;
-          Info<< X2name << " read from the " << startTimeName << " folder." << endl;
-        }
-        else
-        {
-          X2.internalFieldRef() = X2Calc.internalField();
-          
           X2.correctBoundaryConditions();
-          Info<< X2name << " calculated from the mass fractions of "
-                << startTimeName << " folder." << endl;
-        }
 
-        X1.correctBoundaryConditions();
-        X2.correctBoundaryConditions();
-
-        XinitDone = true;
-    }
-    forAll(X1.boundaryField(), patchi)
-          {
-              if (X1.boundaryField()[patchi].type() == "fixedValue")
-              {
-                X1.boundaryFieldRef()[patchi] == X1Calc.boundaryField()[patchi]; 
-              }
-          }
-
-    forAll(X2.boundaryField(), patchi)
-          {
-              if (X2.boundaryField()[patchi].type() == "fixedValue")
-              {
-                X2.boundaryFieldRef()[patchi] == X2Calc.boundaryField()[patchi]; 
-              }
-          }
+          XinitDone = true;
+      }
+//    // updating the values of the mole fractions if the Boundary of the mass fractions was fixedValue
+//      forAll(X1.boundaryField(), patchi)
+//            {
+//                if (X1.boundaryField()[patchi].type() == "fixedValue")
+//                {
+//                  X1.boundaryFieldRef()[patchi] == X1Calc.boundaryField()[patchi]; 
+//                }
+//            }
+//
+//      forAll(X2.boundaryField(), patchi)
+//            {
+//                if (X2.boundaryField()[patchi].type() == "fixedValue")
+//                {
+//                  X2.boundaryFieldRef()[patchi] == X2Calc.boundaryField()[patchi]; 
+//                }
+//            }
   // VLE constant 
     const volScalarField& T = mixture.T();
 
@@ -246,31 +243,48 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     Info<<"Relative volatility min / max = "<< min(A12).value()
           << " / " << max(A12).value() << endl;
     
+
+
     volScalarField Kgcst("Kgcst",A12/(1+(A12-1)*X1));
 
-    // ---------------------------------------------------------------------
-    // Eq. (6.19)
-    // ---------------------------------------------------------------------
-    volScalarField fractionL("fractionL", (ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
-    volScalarField fractionG("fractionG", Kgcst*(ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
+  // ---------------------------------------------------------------------
+  // Concentration Equation GCST 
+  // ---------------------------------------------------------------------
+    
+    const volScalarField fractionL((ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
+    const volScalarField fractionG(Kgcst*(ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
 
     volScalarField Mmix("Mmix", ALPHA1*CL + ALPHA2*CG);
     volScalarField denomenatorGCST("denomenatorGCST", ALPHA1*CL + Kgcst*ALPHA2*CG);
 
-   // volScalarField XiL("XiL", X1*fraction);
-   // volScalarField XiG("XiG", Kgcst*X1*fraction);
+    // volScalarField XiL("XiL", X1*fraction);
+    // volScalarField XiG("XiG", Kgcst*X1*fraction);
 
     surfaceScalarField Cphi("Cphi", phi*fvc::interpolate(C));
     Info<<"1"<<endl;
+    Info<<thermophysicalTransport.D1Eff()<<endl;
+    Info<<thermophysicalTransport.D2Eff()<<endl;
 
     volScalarField D1Eff("D1Eff", ALPHA1*CL*thermophysicalTransport.D1Eff());
     volScalarField D2Eff("D2Eff", ALPHA2*CG*thermophysicalTransport.D2Eff());
 
-    Info<<"2"<<endl;
-    //Info<<"fvc::grad(fractionL*X1)"<<fvc::grad(fractionL*X1)<<endl;
-    //Info<<"D1Eff"<<D1Eff<<endl;
-    //Info<<"fvc::div(D1Eff * fvc::grad(fractionL*X1))"<<fvc::div(D1Eff * fvc::grad(fractionL*X1))<<endl;
 
+
+    volVectorField J1Corr
+    (
+        "J1Corr",
+        D1Eff*X1*fvc::grad(fractionL)
+    );
+ 
+    volVectorField J2Corr
+    (
+        "J2Corr",
+        D2Eff*X1*fvc::grad(fractionG)
+    );
+
+
+    Info<<"2"<<endl;
+            
     volScalarField D1fL("D1fL", D1Eff * fractionL);
     volScalarField D2fG("D2fG", D2Eff * fractionG);
 
@@ -281,6 +295,8 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
       ==
         fvm::laplacian(D1fL, X1)
       + fvm::laplacian(D2fG, X1)
+      + fvc::div(J1Corr)
+      + fvc::div(J2Corr)
     );
 
     Info<<"3"<<endl;
@@ -302,11 +318,11 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
         X2.write();
     }
 
-    // ---------------------------------------------------------------------
-    // back-substitution to  mass fractions
-    // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // back-substitution to  mass fractions
+  // ---------------------------------------------------------------------
     Info<<"5"<<endl;
-   
+    
     volScalarField ALPHA1_pure("ALPHA1_pure", pos(ALPHA1 - (scalar(1) - aTol)));  // only cells with pure phases, mixed cells 0
     volScalarField ALPHA2_pure("ALPHA2_pure", pos(ALPHA2 - (scalar(1) - aTol)));  // only cells with pure phases, mixed cells 0 
     volScalarField ALPHA1_mix("ALPHA1_mix"  , pos(ALPHA1 - ALPHA1_pure)*(ALPHA1 - ALPHA1_pure)); // alpha1 for mixed cells 
@@ -345,11 +361,11 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     // Piecewise assembly
       // Y1L and Y2G have all the Field their real Values
       // Y2L and Y1G have 1 in cells, where their phases does not exist, as a Dummy-value
-     // Y2L and Y1G have in the rest of the cells their real values
-     Y1L = Y1L_pure + Y1L_mix ;                   // has a dummy of 1 in the pure Gas cells              
-     Y2L = Y2L_pure + Y2L_mix - Is_mix_Cell;      // subtraction of the Dummy 1 in the Y2L_pure in the mix cells 
-     Y1G = Y1G_pure + Y1G_mix - Is_mix_Cell;      // subtraction of the Dummy 1 in the Y1G_pure in the mix cells
-     Y2G = Y2G_pure + Y2G_mix;                    // has a dummy of 1 in the pure Liquid cells   
+      // Y2L and Y1G have in the rest of the cells their real values
+      Y1L = Y1L_pure + Y1L_mix ;                   // has a dummy of 1 in the pure Gas cells              
+      Y2L = Y2L_pure + Y2L_mix - Is_mix_Cell;      // subtraction of the Dummy 1 in the Y2L_pure in the mix cells 
+      Y1G = Y1G_pure + Y1G_mix - Is_mix_Cell;      // subtraction of the Dummy 1 in the Y1G_pure in the mix cells
+      Y2G = Y2G_pure + Y2G_mix;                    // has a dummy of 1 in the pure Liquid cells   
     Info<<"10"<<endl;
 
 
@@ -359,7 +375,7 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     Y1G.correctBoundaryConditions();
     Y2G.correctBoundaryConditions();
 
-  
+
   // Push mass-fractions into thermo objects + update derived properties
     mixture.correctComposition();
    // mixture.correctThermo();

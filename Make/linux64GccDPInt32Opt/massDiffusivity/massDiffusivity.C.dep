@@ -2,6 +2,7 @@ $(OBJECTS_DIR)/massDiffusivity/massDiffusivity.C.dep: \
 massDiffusivity/massDiffusivity.C \
 massDiffusivity/massDiffusivity.H \
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/fvMesh.H \
+$(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/addToRunTimeSelectionTable.H \
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/volFields.H \
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/surfaceFields.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/IOdictionary.H \
@@ -23,6 +24,7 @@ $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/slicedVolFieldsFwd.H \
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/slicedSurfaceFieldsFwd.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/className.H \
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/fvMeshTemplates.C \
+$(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/macros.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/GeometricField.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/GeometricFields.H \
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/volMesh.H \
@@ -187,7 +189,6 @@ $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/sphericalTensor.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/symmTensor.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/tensor.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/triad.H \
-$(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/macros.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/debug.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/dimensionedTypes.H \
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/FieldField.H \
@@ -621,6 +622,7 @@ $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/SpatialTensorI.H \
 
 massDiffusivity/massDiffusivity.H :
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/fvMesh.H :
+$(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/addToRunTimeSelectionTable.H :
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/volFields.H :
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/surfaceFields.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/IOdictionary.H :
@@ -642,6 +644,7 @@ $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/slicedVolFieldsFwd.H :
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/slicedSurfaceFieldsFwd.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/className.H :
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/fvMeshTemplates.C :
+$(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/macros.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/GeometricField.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/GeometricFields.H :
 $(WM_PROJECT_DIR)/src/finiteVolume/lnInclude/volMesh.H :
@@ -806,7 +809,6 @@ $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/sphericalTensor.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/symmTensor.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/tensor.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/triad.H :
-$(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/macros.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/debug.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/dimensionedTypes.H :
 $(WM_PROJECT_DIR)/src/OpenFOAM/lnInclude/FieldField.H :
