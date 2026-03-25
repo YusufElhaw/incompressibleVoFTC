@@ -1,0 +1,89 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  13
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    location    "constant";
+    object      physicalProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+viscosityModel  constant;
+
+nu              1e-06;
+
+rho             1000;
+
+thermoType // from the class src/thermophysicalModels/basic/basicThermo/basicThermoTemplates.C
+{
+   type            heRhoThermo;
+   mixture         multicomponentMixture;
+   transport       const;
+   thermo          hConst;
+   equationOfState rhoConst;
+   specie          specie;
+   energy       /*sensibleInternalEnergy;//*/   sensibleEnthalpy;
+}
+
+species
+(
+   Benzol
+   Toluol
+);
+
+defaultSpecie Toluol;
+
+Benzol
+{
+  specie
+   {
+       molWeight   78.11;
+   }
+   thermodynamics
+   {
+       hf          0;
+       Cp          1726;
+     // Tref         300;//298.15;
+     // esRef        0;
+   }
+   transport
+   {
+       mu          0.648e-3;
+       Pr          7.8;
+   }  
+   equationOfState
+   {
+       rho         888;
+   }
+   
+}
+
+Toluol
+{
+   specie
+   {
+       molWeight   92.14;
+   }
+   thermodynamics
+   {
+       hf          0;
+       Cp          1704;
+
+   }
+   transport
+   {
+       mu          0.59e-3;
+       Pr          6;
+   }  
+   equationOfState
+   {
+       rho         862;
+   }
+}
+
+// ************************************************************************* //

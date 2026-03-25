@@ -1,0 +1,44 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  13
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    location    "constant";
+    object      VLEProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+VLEConstantCoeffs
+{
+
+Benzol // get the name from  physicalProperties.<phase1> species (...)
+{
+    pSat  //333.4 to 373.5 Eon, Pommier, et al., 1971 from NIST
+    {
+        type /*constant;//*/Antoine;
+        A   10.8816;            //4.72583; *ln(10)	
+        B   -3823.8;            //-1660.652; *ln(10)
+        C   -1.461;       
+        value 0.4;
+        // ... Antoine-Koeffizienten wie in OpenFOAM saturationModels
+    }
+}
+
+Toluol // get the name from  physicalProperties.<phase1> species (...)
+{
+    pSat //308.52 to 384.66		Williamham, Taylor, et al., 1945 from NIST
+    {
+        type  /*constant; //*/Antoine;
+        A   9.3905637;          //	4.07827  * ln(10)
+        B   -3094.5431176;      //  -1343.943 * ln(10)
+        C   -53.773;
+        value 0.6;
+    }
+}
+}

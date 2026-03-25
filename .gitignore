@@ -2,6 +2,7 @@ fvModels/
 Make/linux*/
 *.dep
 *.o
+*.O
 Allwmake
 Allwclean
 lnInclude/

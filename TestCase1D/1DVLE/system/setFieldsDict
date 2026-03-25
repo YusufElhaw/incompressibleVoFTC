@@ -1,0 +1,173 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  13
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      setFieldsDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+defaultValues
+{
+	
+	// liquid phase	 
+    alpha.liquid        0;
+    Benzol.liquid   0;
+    Toluol.liquid   1;   
+  
+ 	// gas phase	 
+    Benzol.gas      1;      
+    Toluol.gas      0;   
+	
+    T		300;
+}
+
+zones
+{
+    links // gas  
+	{
+	    type        box;   
+		zoneType 	cell;
+        box (0 0 0)(0.01 0.005 0.005);
+        values
+        {
+        // liquid phase	 
+     //   alpha.liquid 1;
+     //   	Benzol.liquid   0.6;
+     //    Toluol.liquid   0.4;   
+    
+        // gas phase	 
+        Benzol.gas      0.7;      
+        Toluol.gas      0.3;   
+        }
+    }
+    Mitte // liquid
+	{
+		type        box;   
+		zoneType 	cell;
+        box (0.01 0 0)(0.06 0.005 0.005);
+        values
+        {
+        // liquid phase	 
+        alpha.liquid 1;
+      	Benzol.liquid   0.6;
+        Toluol.liquid   0.4;   
+    	T		370;
+     //  gas phase	 
+   //     Benzol.gas      0.99;      
+   //     Toluol.gas      0.01;   
+			
+        }
+    }
+
+   
+    rechts //gas 
+	{
+	    type        box;   
+		zoneType 	cell;
+        box (0.06 0 0)(0.3 0.005 0.005);
+        values
+        {
+        // liquid phase	 
+       // alpha.liquid 1;
+       // 	Benzol.liquid   0.6;
+       //  Toluol.liquid   0.4;   
+    
+        // gas phase	 
+        Benzol.gas      0.7;      
+        Toluol.gas      0.3;   
+        
+        }
+    }
+   
+    
+}
+ 
+
+
+/*
+
+ defaultValues
+{
+	
+	// liquid phase	 
+    alpha.liquid        0;
+      	Benzol.liquid   1;
+        Toluol.liquid   0;   
+  
+ 	// gas phase	 
+    Benzol.gas      1;      
+    Toluol.gas      0;   
+	
+    T		300;
+}
+
+zones
+{
+    links // gas  
+	{
+	    type        box;   
+		zoneType 	cell;
+        box (0 0 0)(0.01 0.005 0.005);
+        values
+        {
+        // liquid phase	 
+     //   alpha.liquid 1;
+     //   	Benzol.liquid   0.6;
+     //    Toluol.liquid   0.4;   
+    
+        // gas phase	 
+        Benzol.gas      1;      
+        Toluol.gas      0;   
+        }
+    }
+    Mitte // liquid
+	{
+		type        box;   
+		zoneType 	cell;
+        box (0.01 0 0)(0.06 0.005 0.005);
+        values
+        {
+        // liquid phase	 
+        alpha.liquid 0.9995;
+      	Benzol.liquid   1;
+        Toluol.liquid   0;   
+    	T		370;
+     //  gas phase	 
+   //     Benzol.gas      0.99;      
+   //     Toluol.gas      0.01;   
+			
+        }
+    }
+
+   
+    rechts //gas 
+	{
+	    type        box;   
+		zoneType 	cell;
+        box (0.06 0 0)(0.3 0.005 0.005);
+        values
+        {
+        // liquid phase	 
+       // alpha.liquid 1;
+       // 	Benzol.liquid   0.6;
+       //  Toluol.liquid   0.4;   
+    
+        // gas phase	 
+        Benzol.gas      1;      
+        Toluol.gas      0;   
+        
+        }
+    }
+   
+    
+}
+
+// ************************************************************************* //
+
