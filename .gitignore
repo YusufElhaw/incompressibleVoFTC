@@ -6,3 +6,9 @@ Make/linux*/
 Allwmake
 Allwclean
 lnInclude/
+Make/linux64GccDPInt32Opt/alphaSuSp.o
+Make/linux64GccDPInt32Opt/incompressibleTwoPhaseVoFMixtureTC/incompressibleTwoPhaseVoFMixtureTC.o
+Make/linux64GccDPInt32Opt/compositionPredictor.o
+Make/linux64GccDPInt32Opt/incompressibleVoFTC.o
+Make/linux64GccDPInt32Opt/thermophysicalPredictor.C.dep
+Make/linux64GccDPInt32Opt/thermophysicalPredictor.o
