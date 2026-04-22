@@ -53,7 +53,6 @@
        example) a compressible thermodynamic model is being used.
   
  Example of the boundary condition specification usage:
-
     patches top and bottom are walls in blockMeshDict, but are coupled together 
     in createNonConformalCouples utility with the following specification:
     1- in 0/p_rgh:
@@ -80,7 +79,7 @@
             type            slip;
         }
     
-    3- in 0/alpha.* or other fields:
+    3- in 0/alpha.* or any other fields:
         bottom
         {
             type            zeroGradient;
@@ -97,44 +96,98 @@
         );
 
     5- in createNonConformalCouplesDict:
-    bottom_Top
+    fields  yes; //    only for one processor. for more then one processor, should be "no" and the patch fields should be added manually to the patches in the couple definition as shown below.
+
+    nonConformalCouples
     {
-    owner
+        bottom_Top // or any other name for the couple
         {
-            patch       bottom;
-
-            patchFields
-            {
-                p_rgh
+            owner
                 {
-                    type        prghNonConformalCyclicPressure;
-                    patchType   nonConformalCyclic;
-                    rho         rho;
-                    rhoInf      1;
-                    value       uniform 0;
-                   
+                    patch       bottom;
+
+                    patchFields
+                    {
+                        p_rgh
+                        {
+                            type        prghNonConformalCyclicPressure;
+                            patchType   nonConformalCyclic;
+                            rho         rho;
+                            rhoInf      1;
+                            value       uniform 0;
+                        }
+                    }
                 }
-            }
-        }
-    neighbour
-        {
-            patch       top;
-
-            patchFields
-            {
-                p_rgh
+            neighbour
                 {
+                    patch       top;
+
+                    patchFields
+                    {
+                        p_rgh
+                        {
+                            type        prghNonConformalCyclicPressure;
+                            patchType   nonConformalCyclic;
+                            value       uniform 0;
+                        }
+                    }
+                }
+            transform       translational;
+            separation      (0 -0.025 0); // or what ever the separation between the cyclic patches is
+        }    
+    }
+6-  for more than one processor, do the decomposPar first. do the cut only 
+    parallel to the gravity direction. so that the coupeld Patchs for example
+    ("top" and "bottom") are in the same processor.
+    example for 48 processors: (8 1 6). where the gravity in the y direction and
+    the normal to the coupled patches "top" and "bottom" are in the y direction.  
+    Then the patch field for p_rgh should be added manually to the patches in the
+    couple definition in the processors folders as shown below, and "fields no" 
+    should be used in createNonConformalCouplesDict to avoid adding the patch 
+    fields to all patches in the couple: nonConformalCouples.
+
+    Then in the processors folders under /0/p_rgh
+   you get something like this:
+            bottom_Top_on_bottom
+            {
+                type nonConformalCyclic;
+            }
+            bottom_Top_on_top
+            {
+                type nonConformalCyclic;
+            }
+        change it to this:
+            bottom_Top_on_bottom
+            {
+                type        prghNonConformalCyclicPressure;
+                patchType   nonConformalCyclic;
+                rho         rho;
+                rhoInf      1;
+                value       uniform 0;
+            }
+            bottom_Top_on_top
+            {
                 type        prghNonConformalCyclicPressure;
                 patchType   nonConformalCyclic;
                 value       uniform 0;
-                }
             }
-        }
-    transform       translational;
-    separation      (0 -0.025 0); // or what ever the separation between the cyclic patches is
-    }
-}
-
+        you can  just use this line in the terminal to do it automatically for all processors:
+        \verbatim    
+sed -i '/nonConformalCyclic/c\
+type      prghNonConformalCyclicPressure;\
+patchType   nonConformalCyclic;\
+rho         rho;\
+rhoInf      1;\
+value       uniform 0;' processor* /0/p_rgh
+        \endverbatim //           ^delete this character
+        then start the simulation in parallel as usual. 
+        before running reconstructPar you have to change those back in every processor folder in every time to 
+        "type nonConformalCyclic;". you can use this line in the terminal to do it automatically for all time steps and all processors:
+        \verbatim
+perl -0pi -e 's/(\{\s*)[^{}]*?type\s+prghNonConformalCyclicPressure;[^{}]*?(\s*\})/$1    type            nonConformalCyclic;\n$2/gs' processor* / * /p_rgh
+        \endverbatim  //                                                                                                                                   ^ ^ ^ delete these characters
+        
+        then do the reconstructPar as usual.
   
  SourceFiles
      prghNonConformalCyclicPressureFvPatchScalarField.C
@@ -254,7 +307,11 @@ public:
             const direction cmpt,
             const Pstream::commsTypes commsType
         ) const;
-
+        const scalarField& jump() const
+        {
+            return jump_;
+        }
+        
         //- Write
         virtual void write(Ostream&) const;
 };

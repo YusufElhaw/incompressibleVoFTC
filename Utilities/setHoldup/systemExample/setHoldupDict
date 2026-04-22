@@ -1,0 +1,37 @@
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      setHoldupDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+#include "InitialInputParameter"
+
+field           "alpha.water";
+
+type            plane;
+
+normal          (0 -0.01 0);
+
+domainHeight    0.5;
+
+setPoint        0.2; // percentage of Volume to be set as liquid, for 0.2 or 20, the value of the liquid phase in the setHoldup region will be calculated as 0.2*volume or 20% * volume of the whole mesh. 
+
+tolerance       1e-05;
+
+iterationSteps  30;
+
+origin          (0 0.01 0); // the origin of the plane, the plane will be defined by the normal vector and the origin point.
+
+radius          0.01; //optional Radius limit
+
+volumeBasis     mesh; //optional volume Basis
+
+liquidValue     1; // optional liquidValue
+
+gasValue        0; // optional gasValue
+
+// ************************************************************************* //

@@ -1,0 +1,4 @@
+gasMeanVelocityForce.C
+patchGasMeanVelocityForce/patchGasMeanVelocityForce.C
+
+LIB = $(FOAM_USER_LIBBIN)/libgasMeanVelocityForce

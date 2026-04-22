@@ -21,7 +21,12 @@ addToRunTimeSelectionTable
     dictionary
 );
 
-
+addToRunTimeSelectionTable
+(
+    fvPatchScalarField,
+    prghNonConformalCyclicPressureFvPatchScalarField,
+    patchMapper
+);
 // * * * * * * * * * * * * * * Constructors  * * * * * * * * * * * * * * //
 
 prghNonConformalCyclicPressureFvPatchScalarField::
@@ -160,38 +165,55 @@ void prghNonConformalCyclicPressureFvPatchScalarField::updateCoeffs()
         return;
     }
 
+    if
+    (
+        !this->db().foundObject<surfaceScalarField>("ghf")
+     || !this->db().foundObject<surfaceScalarField>("rAUf")
+     || !this->db().foundObject<surfaceScalarField>("phiHbyA")
+    )
+    {
+        jump_ = scalarField(this->patch().size(), Zero);
+        nonConformalCyclicFvPatchField<scalar>::updateCoeffs();
+        return;
+    }
+
     const volScalarField& vf =
         static_cast<const volScalarField&>(this->internalField());
 
-    const prghNonConformalCyclicPressureFvPatchScalarField& nbrPf =
-        refCast<const prghNonConformalCyclicPressureFvPatchScalarField>
-        (
-            this->nbrPatchField()
-        );
-
     const label patchi = this->patch().index();
-    const label nbrPatchi = nbrPf.patch().index();
+    const label nbrPatchi = this->cyclicPatch().nbrPatchIndex();
 
-    // Buoyancy fields
+    const auto& pBf =
+        this->patch().boundaryMesh()[nbrPatchi]
+        .lookupPatchField<volScalarField, scalar>(this->internalField().name());
+
+    const auto& nbrPf =
+        refCast<const prghNonConformalCyclicPressureFvPatchScalarField>(pBf);
+
+    const word rhoName =
+        this->cyclicPatch().owner() ? rhoName_ : nbrPf.rhoName_;
+
+    if (!this->db().foundObject<volScalarField>(rhoName))
+    {
+        jump_ = scalarField(this->patch().size(), Zero);
+        nonConformalCyclicFvPatchField<scalar>::updateCoeffs();
+        return;
+    }
+
     const volScalarField& rhoVf =
-        this->db().lookupObject<volScalarField>
-        (
-            this->cyclicPatch().owner() ? rhoName_ : nbrPf.rhoName_
-        );
+        this->db().lookupObject<volScalarField>(rhoName);
 
     const volScalarField::Boundary& rhoBf = rhoVf.boundaryField();
 
     const surfaceScalarField::Boundary& ghfBf =
         this->db().lookupObject<surfaceScalarField>("ghf").boundaryField();
 
-    // Pressure solution fields
     const surfaceScalarField::Boundary& rAUfBf =
         this->db().lookupObject<surfaceScalarField>("rAUf").boundaryField();
 
     const surfaceScalarField::Boundary& phiHbyABf =
         this->db().lookupObject<surfaceScalarField>("phiHbyA").boundaryField();
 
-    // Delta coeffs
     const tmp<surfaceScalarField> deltaCoeffsSf =
         fv::snGradScheme<scalar>::New
         (
@@ -202,9 +224,11 @@ void prghNonConformalCyclicPressureFvPatchScalarField::updateCoeffs()
     const scalarField& deltaCoeffsPf =
         deltaCoeffsSf->boundaryField()[patchi];
 
-    // Same formula as prghCyclicPressure
+    const scalar nbrRhoInf =
+        this->cyclicPatch().owner() ? rhoInf_ : nbrPf.rhoInf_;
+
     jump_ =
-        (rhoBf[patchi] - (this->cyclicPatch().owner() ? rhoInf_ : nbrPf.rhoInf_))
+        (rhoBf[patchi] - nbrRhoInf)
        *(ghfBf[nbrPatchi] - ghfBf[patchi])
       + (
             phiHbyABf[patchi]
@@ -254,6 +278,8 @@ void prghNonConformalCyclicPressureFvPatchScalarField::write
 ) const
 {
     fvPatchScalarField::write(os);
+
+    writeEntry(os, "patchType", word("nonConformalCyclic"));
 
     if (this->cyclicPatch().owner())
     {

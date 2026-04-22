@@ -1,0 +1,7 @@
+setHoldup.C
+implicitFunctions/implicitFunction.C
+implicitFunctions/planeImplicitFunction.C
+implicitFunctions/sphereImplicitFunction.C
+implicitFunctions/cylinderImplicitFunction.C
+
+EXE = $(FOAM_USER_APPBIN)/setHoldup

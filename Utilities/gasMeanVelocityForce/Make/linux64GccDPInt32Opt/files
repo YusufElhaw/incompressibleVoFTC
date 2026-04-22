@@ -1,0 +1,4 @@
+SOURCE += gasMeanVelocityForce.C
+SOURCE += patchGasMeanVelocityForce/patchGasMeanVelocityForce.C
+
+LIB = $(FOAM_USER_LIBBIN)/libgasMeanVelocityForce
