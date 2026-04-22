@@ -201,6 +201,8 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 //                  X2.boundaryFieldRef()[patchi] == X2Calc.boundaryField()[patchi]; 
 //                }
 //            }
+    Info<<thermophysicalTransport.D1Eff()<<endl;// debugging
+    Info<<thermophysicalTransport.D2Eff()<<endl;// debugging
   // VLE constant 
     const volScalarField& T = mixture.T();
 
@@ -242,33 +244,31 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 
     Info<<"Relative volatility min / max = "<< min(A12).value()
           << " / " << max(A12).value() << endl;
-    
-
-
+  
     volScalarField Kgcst("Kgcst",A12/(1+(A12-1)*X1));
-
+  
   // ---------------------------------------------------------------------
   // Concentration Equation GCST 
   // ---------------------------------------------------------------------
-    
-    const volScalarField fractionL((ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
-    const volScalarField fractionG(Kgcst*(ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
-
-    volScalarField Mmix("Mmix", ALPHA1*CL + ALPHA2*CG);
-    volScalarField denomenatorGCST("denomenatorGCST", ALPHA1*CL + Kgcst*ALPHA2*CG);
-
-    // volScalarField XiL("XiL", X1*fraction);
-    // volScalarField XiG("XiG", Kgcst*X1*fraction);
-
-    surfaceScalarField Cphi("Cphi", phi*fvc::interpolate(C));
-    Info<<"1"<<endl;
-    Info<<thermophysicalTransport.D1Eff()<<endl;
-    Info<<thermophysicalTransport.D2Eff()<<endl;
+      surfaceScalarField Cphi("Cphi", phi*fvc::interpolate(C));
+  
+    // Number of Picard Iterations
+      const label nCompositionPicard
+      (
+        max
+        (
+          1,
+          pimple.dict().lookupOrDefault<label>("compositionPicardIterations", 2)
+        )
+      );
+    volScalarField fractionL((ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
+    volScalarField fractionG(Kgcst*(ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG));
 
     volScalarField D1Eff("D1Eff", ALPHA1*CL*thermophysicalTransport.D1Eff());
     volScalarField D2Eff("D2Eff", ALPHA2*CG*thermophysicalTransport.D2Eff());
 
-
+    volScalarField D1fL("D1fL", D1Eff*fractionL);
+    volScalarField D2fG("D2fG", D2Eff*fractionG);
 
     volVectorField J1Corr
     (
@@ -281,35 +281,54 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
         "J2Corr",
         D2Eff*X1*fvc::grad(fractionG)
     );
+    Info<<"1"<<endl;
+   
+    
+    
+     D1Eff= ALPHA1*CL*thermophysicalTransport.D1Eff();
+     D2Eff= ALPHA2*CG*thermophysicalTransport.D2Eff();
+      for (label picardIter = 0; picardIter < nCompositionPicard; ++picardIter)
+        {
+          Info<< "compositionPredictor Picard iteration "
+              << picardIter + 1 << "/" << nCompositionPicard << endl;
+        
+        Kgcst=A12/(1+(A12-1)*X1);
+        fractionL = (ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG);
+        fractionG = Kgcst*(ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG);
+        //volScalarField Mmix("Mmix", ALPHA1*CL + ALPHA2*CG);
+        //volScalarField denomenatorGCST("denomenatorGCST", ALPHA1*CL + Kgcst*ALPHA2*CG);
+
+        D1fL = D1Eff*fractionL;
+        D2fG = D2Eff*fractionG;
+        J1Corr = D1Eff*X1*fvc::grad(fractionL);
+        J2Corr = D2Eff*X1*fvc::grad(fractionG);
 
 
-    Info<<"2"<<endl;
-            
-    volScalarField D1fL("D1fL", D1Eff * fractionL);
-    volScalarField D2fG("D2fG", D2Eff * fractionG);
+        Info<<"2"<<endl;
+        
+        fvScalarMatrix X1Eqn
+        (
+            fvm::ddt(C, X1)
+          + fvm::div(Cphi, X1)
+          ==
+            fvm::laplacian(D1fL, X1)
+          + fvm::laplacian(D2fG, X1)
+          + fvc::div(J1Corr)
+          + fvc::div(J2Corr)
+        );
 
-    fvScalarMatrix X1Eqn
-    (
-        fvm::ddt(C, X1)
-      + fvm::div(Cphi, X1)
-      ==
-        fvm::laplacian(D1fL, X1)
-      + fvm::laplacian(D2fG, X1)
-      + fvc::div(J1Corr)
-      + fvc::div(J2Corr)
-    );
+        Info<<"3"<<endl;
 
-    Info<<"3"<<endl;
+        X1Eqn.relax();
+        fvConstraints().constrain(X1Eqn);
+        X1Eqn.solve();
 
-    X1Eqn.relax();
-    fvConstraints().constrain(X1Eqn);
-    X1Eqn.solve();
+        X1 = min(max(X1, scalar(0)), scalar(1));
+        X2 = scalar(1) - X1;
 
-    X1 = min(max(X1, scalar(0)), scalar(1));
-    X2 = scalar(1) - X1;
-
-    X1.correctBoundaryConditions();
-    X2.correctBoundaryConditions();
+        X1.correctBoundaryConditions();
+        X2.correctBoundaryConditions();  
+      }
     Info<<"4"<<endl;
 
     if (runTime.writeTime())

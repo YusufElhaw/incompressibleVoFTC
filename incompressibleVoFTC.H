@@ -93,6 +93,8 @@ protected:
         //- Static pressure field
         volScalarField p;
 
+        volScalarField H;
+
 
     // Pressure reference
 

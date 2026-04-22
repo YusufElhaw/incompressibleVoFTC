@@ -29,17 +29,21 @@ License
 #include "fvmDiv.H"             
 #include "fvmSup.H"             
 #include "fvmLaplacian.H"
+#include "fvcLaplacian.H"
+
 
 // * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * * //
 
 void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
 {
   compositionPredictor();
-
+  //T_0  298.15; // reference temperature of 298.15 K   $FOAM_ETC/controlDic
   Info <<nl<< "thermophysicalPredictor läuft"<<endl;
+  
   const volScalarField& rho1(mixture.thermo1().rho()); 
   const volScalarField& rho2(mixture.thermo2().rho());
-  
+  //const volScalarField& rho(mixture.rho());
+
   const volScalarField& Cpv1(mixture.thermo1().Cpv());
   const volScalarField& Cpv2(mixture.thermo2().Cpv());
 
@@ -51,16 +55,17 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
   const fvScalarMatrix e2Source(fvModels().source(alpha2, rho2, e2));
 
   volScalarField& T = mixture.T();
-   
+   /*
    const volScalarField rhoCpv("rhoCpv", alpha1*rho1*Cpv1+alpha2*rho2*Cpv2);
    
+     
    const surfaceScalarField rhoCpvPhi
-   (   
+   (
        "rhoCpvPhi",
        // alphaRhoCpvPhi1                  
-       fvc::interpolate(Cpv1)*alphaRhoPhi1
+       fvc::interpolate(Cpv1)*fvc::interpolate((mixture.thermo1().rho()))*alphaPhi1
        // + alphaRhoCpvPhi2
-     + fvc::interpolate(Cpv2)*alphaRhoPhi2
+     + fvc::interpolate(Cpv2)*fvc::interpolate((mixture.thermo2().rho()))*alphaPhi2
    );
     
    fvScalarMatrix TEqn 
@@ -79,8 +84,52 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
    TEqn.solve();
    fvConstraints().constrain(T);
    mixture.correctThermo();
-   mixture.correct();
+   mixture.correct();*/
+    const dimensionedScalar T0("T0", dimTemperature, 298.15);
 
+
+    const volScalarField limAlpha1( min(max(alpha1, scalar(0)), scalar(1)) );
+    const wordList TpatchTypes = T.boundaryField().types();
+    surfaceScalarField alphaEffRho
+    (
+        IOobject
+        (
+            "alphaEffRho",
+            mesh.time().name(),
+            mesh,
+            IOobject::NO_READ,
+            IOobject::NO_WRITE
+        ),
+        fvc::interpolate(rho)
+      *fvc::interpolate(thermophysicalTransport.alphaEff())
+    );
+//Info<<"Cpv1 beträgt"<<Cpv1<<endl;
+
+    H = ( (T - T0)*(limAlpha1*rho1*Cpv1 + (1.0 - limAlpha1)*rho2*Cpv2) )/rho;
+
+    H.correctBoundaryConditions();
+
+    const scalar RelaxFac = 1.0;
+    fvScalarMatrix EEqn
+      (
+          fvm::ddt(rho, H)
+        + fvm::div(rhoPhi, H)
+        ==
+         fvc::laplacian(thermophysicalTransport.kappaEff(), T)
+        + RelaxFac*
+        (   
+          fvm::laplacian(alphaEffRho, H) 
+        - fvc::laplacian(alphaEffRho, H) 
+        ) 
+              
+      );
+        EEqn.relax();
+        fvConstraints().constrain(EEqn);
+        EEqn.solve();
+        //Now reevaluate T for the updated enthalpy fields
+        T = T0 + rho*H/(limAlpha1*rho1*Cpv1 + (1.0 - limAlpha1)*rho2*Cpv2);
+        mixture.correctThermo();
+        mixture.correct();
 }
 
 //void Foam::solvers::incompressibleVoFTC::energyPredictor()

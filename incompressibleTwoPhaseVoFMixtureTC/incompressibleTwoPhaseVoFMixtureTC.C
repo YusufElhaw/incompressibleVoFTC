@@ -307,8 +307,8 @@ bool Foam::incompressibleTwoPhaseVoFMixtureTC::read()
 {
     if (twoPhaseVoFMixture::read())
     {
-       // nuModel1_->lookup("rho") >> rho1_;
-       // nuModel2_->lookup("rho") >> rho2_;
+      //  nuModel1_->lookup("rho") >> rho1_;// komment the lines by recoupling to navier stokes 
+      //  nuModel2_->lookup("rho") >> rho2_;// komment the lines by recoupling to navier stokes 
 
         return true;
     }
@@ -331,16 +331,28 @@ void Foam::incompressibleTwoPhaseVoFMixtureTC::correct()
     );
 
     const volScalarField limitedAlpha2 ("limitedAlpha2", scalar(1) - limitedAlpha1);
+    //dimensionedScalar Rho1_("rho", dimDensity, nuModel1_());
+    //dimensionedScalar Rho2_("rho", dimDensity, nuModel2_());
+    //
+    //Info<< "Correcting incompressibleTwoPhaseVoFMixtureTC : rho1 = " << rho1_ << "  and rho2 = " << rho2_ << nl << endl;
+    //rho_ = alpha1()*Rho1_ + alpha2()*Rho2_;
 
-    rho_ = limitedAlpha1*thermo1().rho() + limitedAlpha2*thermo2().rho();
+    //rho_ = limitedAlpha1*thermo1().rho() + limitedAlpha2*thermo2().rho(); // recoupling to navier stokes
 
     // Average kinematic viscosity calculated from dynamic viscosity
+     //   nu_ =
+     //   (
+     //       limitedAlpha1*rho1_*nuModel1_->nu()
+     //   + (scalar(1) - limitedAlpha1)*rho2_*nuModel2_->nu()
+     //   )/(limitedAlpha1*rho1_ + (scalar(1) - limitedAlpha1)*rho2_);
+ 
 
-    nu_ =
-    ( limitedAlpha1*thermo1().rho()*thermo1().nu()      //was in incompressibleVoF "nuModel1_->nu()"
-    + limitedAlpha2*thermo2().rho()*thermo2().nu()      //was in incompressibleVoF "nuModel2_->nu()"
-    )/rho_;
-    
+        // recoupling to navier stokes
+            nu_ =
+            ( limitedAlpha1*thermo1().rho()*thermo1().nu()      //was in incompressibleVoF "nuModel1_->nu()"
+            + limitedAlpha2*thermo2().rho()*thermo2().nu()      //was in incompressibleVoF "nuModel2_->nu()"
+            )/rho_;
+        
 }
 
 

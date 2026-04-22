@@ -70,7 +70,21 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
         ),
         p_rgh + rho*buoyancy.gh
     ),
-
+    H(
+        IOobject
+        (
+          "H",
+          runTime.name(),
+          mesh,
+          IOobject::NO_READ,
+          IOobject::NO_WRITE
+        ),
+        mesh,
+        dimensionedScalar("H", dimEnergy/dimMass, 0 ),
+        mixture.T().boundaryField().types()
+      
+      )
+    ,
     pressureReference_
     (
         p,
@@ -146,13 +160,19 @@ Foam::solvers::incompressibleVoFTC::~incompressibleVoFTC()
 void Foam::solvers::incompressibleVoFTC::prePredictor()
 {
     twoPhaseVoFSolver::prePredictor();
-
+  //    // original with constant density
+  //   const dimensionedScalar& rho1 = mixture.rho1();
+  //   const dimensionedScalar& rho2 = mixture.rho2();
+  //
+  //   // Calculate the mass-flux
+  //   rhoPhi = alphaPhi1*rho1 + alphaPhi2*rho2;
+    //recouple to navier stokes
     alphaRhoPhi1 = fvc::interpolate((mixture.thermo1().rho()))*alphaPhi1;
     alphaRhoPhi2 = fvc::interpolate((mixture.thermo2().rho()))*alphaPhi2; 
 
     // Calculate the mass-flux
     rhoPhi  = alphaPhi1*fvc::interpolate(mixture.thermo1().rho())
-            + alphaPhi2*fvc::interpolate(mixture.thermo2().rho());
+    + alphaPhi2*fvc::interpolate(mixture.thermo2().rho());
 }
 
 
