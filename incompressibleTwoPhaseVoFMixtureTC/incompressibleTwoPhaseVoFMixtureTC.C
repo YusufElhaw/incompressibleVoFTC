@@ -337,7 +337,6 @@ void Foam::incompressibleTwoPhaseVoFMixtureTC::correct()
     //Info<< "Correcting incompressibleTwoPhaseVoFMixtureTC : rho1 = " << rho1_ << "  and rho2 = " << rho2_ << nl << endl;
     //rho_ = alpha1()*Rho1_ + alpha2()*Rho2_;
 
-    //rho_ = limitedAlpha1*thermo1().rho() + limitedAlpha2*thermo2().rho(); // recoupling to navier stokes
 
     // Average kinematic viscosity calculated from dynamic viscosity
      //   nu_ =
@@ -346,13 +345,15 @@ void Foam::incompressibleTwoPhaseVoFMixtureTC::correct()
      //   + (scalar(1) - limitedAlpha1)*rho2_*nuModel2_->nu()
      //   )/(limitedAlpha1*rho1_ + (scalar(1) - limitedAlpha1)*rho2_);
  
+    // recoupling to navier stokes
 
-        // recoupling to navier stokes
-            nu_ =
-            ( limitedAlpha1*thermo1().rho()*thermo1().nu()      //was in incompressibleVoF "nuModel1_->nu()"
-            + limitedAlpha2*thermo2().rho()*thermo2().nu()      //was in incompressibleVoF "nuModel2_->nu()"
-            )/rho_;
-        
+        rho_ = limitedAlpha1*thermo1().rho() + limitedAlpha2*thermo2().rho(); // recoupling to navier stokes
+
+        nu_ =
+        ( limitedAlpha1*thermo1().rho()*thermo1().nu()      //was in incompressibleVoF "nuModel1_->nu()"
+        + limitedAlpha2*thermo2().rho()*thermo2().nu()      //was in incompressibleVoF "nuModel2_->nu()"
+        )/rho_;
+    
 }
 
 

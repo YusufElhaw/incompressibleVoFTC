@@ -93,7 +93,7 @@ protected:
         //- Static pressure field
         volScalarField p;
 
-        volScalarField H;
+      //  volScalarField H;
 
 
     // Pressure reference
@@ -110,6 +110,10 @@ protected:
         // Phase-2 mass-flux
         surfaceScalarField alphaRhoPhi2;
 
+        //- Kinetic energy field
+
+        volScalarField K;
+
     // Momentum transport
 
         //- Momentum transport model
@@ -119,7 +123,20 @@ protected:
 
         //- Thermophysical transport model
         incompressibleInterPhaseThermophysicalTransportModelTC thermophysicalTransport;
-     
+    
+    // Test energy conservation (total thermal energy field)
+        volScalarField Etherm;   
+    // Test species mass conservation
+        volScalarField nMoles1;
+        volScalarField nMoles2;
+        volScalarField nMolesTotal;
+    // Cached temporary fields
+
+        //- Phase-1 continuity error
+        tmp<volScalarField::Internal> contErr1;
+
+        //- Phase-2 continuity error
+        tmp<volScalarField::Internal> contErr2;
     // Protected Member Functions
 
         //- Return the pressure reference

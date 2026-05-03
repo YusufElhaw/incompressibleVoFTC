@@ -70,21 +70,20 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
         ),
         p_rgh + rho*buoyancy.gh
     ),
-    H(
-        IOobject
-        (
-          "H",
-          runTime.name(),
-          mesh,
-          IOobject::NO_READ,
-          IOobject::NO_WRITE
-        ),
-        mesh,
-        dimensionedScalar("H", dimEnergy/dimMass, 0 ),
-        mixture.T().boundaryField().types()
-      
-      )
-    ,
+   // H(
+   //     IOobject
+   //     (
+   //       "H",
+   //       runTime.name(),
+   //       mesh,
+   //       IOobject::NO_READ,
+   //       IOobject::NO_WRITE
+   //     ),
+   //     mesh,
+   //     dimensionedScalar("H", dimEnergy/dimMass, 0 ),
+   //     mixture.T().boundaryField().types()
+   //   
+   //   ),
     pressureReference_
     (
         p,
@@ -102,6 +101,7 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
         IOobject::groupName("alphaRhoPhi", alpha2.group()),
         fvc::interpolate(mixture.thermo2().rho())*alphaPhi2
     ),
+    K("K", 0.5*magSqr(U)),
 
     momentumTransport
     (
@@ -112,7 +112,72 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
         mixture
     ),
     
-    thermophysicalTransport(momentumTransport)
+    thermophysicalTransport(momentumTransport),
+    Etherm   // Test energy conservation
+    (
+        IOobject
+        (
+            "Etherm",
+            runTime.name(),
+            mesh,
+            IOobject::NO_READ,
+            IOobject::NO_WRITE
+        ),
+        mesh,
+        dimensionedScalar("Etherm", dimEnergy/dimVolume, 0)
+    ),
+    nMoles1 // Test mass conservation
+    (
+        IOobject
+        (
+            "nMoles1",
+            runTime.name(),
+            mesh,
+            IOobject::NO_READ,
+            IOobject::NO_WRITE
+        ),
+        mesh,
+        dimensionedScalar
+        (
+            "nMoles1",dimMoles/dimVolume,0
+        )
+    ),
+
+    nMoles2 // Test mass conservation
+    (
+        IOobject
+        (
+            "nMoles2",
+            runTime.name(),
+            mesh,
+            IOobject::NO_READ,
+            IOobject::NO_WRITE
+        ),
+        mesh,
+        dimensionedScalar
+        (
+            "nMoles2",dimMoles/dimVolume,0
+        )
+    ),
+
+    nMolesTotal // Test mass conservation
+    (
+        IOobject
+        (
+            "nMolesTotal",
+            runTime.name(),
+            mesh,
+            IOobject::NO_READ,
+            IOobject::NO_WRITE
+        ),
+        mesh,
+        dimensionedScalar
+        (
+            "nMolesTotal",
+            dimMoles/dimVolume,
+            0
+        )
+    )
 {
     if (correctPhi || mesh.topoChanging())
     {
@@ -160,19 +225,29 @@ Foam::solvers::incompressibleVoFTC::~incompressibleVoFTC()
 void Foam::solvers::incompressibleVoFTC::prePredictor()
 {
     twoPhaseVoFSolver::prePredictor();
-  //    // original with constant density
-  //   const dimensionedScalar& rho1 = mixture.rho1();
-  //   const dimensionedScalar& rho2 = mixture.rho2();
-  //
-  //   // Calculate the mass-flux
-  //   rhoPhi = alphaPhi1*rho1 + alphaPhi2*rho2;
-    //recouple to navier stokes
-    alphaRhoPhi1 = fvc::interpolate((mixture.thermo1().rho()))*alphaPhi1;
-    alphaRhoPhi2 = fvc::interpolate((mixture.thermo2().rho()))*alphaPhi2; 
+    //     original with constant density
+        //   const dimensionedScalar& rho1 = mixture.rho1();
+        //   const dimensionedScalar& rho2 = mixture.rho2();
+  
+    const volScalarField& rho1 = mixture.thermo1().rho();
+    const volScalarField& rho2 = mixture.thermo2().rho();
+    alphaRhoPhi1 = fvc::interpolate(rho1)*alphaPhi1;
+    alphaRhoPhi2 = fvc::interpolate(rho2)*alphaPhi2;
 
     // Calculate the mass-flux
-    rhoPhi  = alphaPhi1*fvc::interpolate(mixture.thermo1().rho())
-    + alphaPhi2*fvc::interpolate(mixture.thermo2().rho());
+    rhoPhi = alphaRhoPhi1 + alphaRhoPhi2;
+
+    contErr1 =
+    (
+        fvc::ddt(alpha1, rho1)()()
+      + fvc::div(alphaRhoPhi1)()()
+    );
+
+    contErr2 =
+    (
+        fvc::ddt(alpha2, rho2)()()
+      + fvc::div(alphaRhoPhi2)()()
+    );
 }
 
 
