@@ -46,7 +46,6 @@ Foam::incompressibleTwoPhaseVoFMixtureTC::incompressibleTwoPhaseVoFMixtureTC
     (
         lookupOrDefault<Switch>("totalInternalEnergy", true)
     ),
-
     p_
     (
         IOobject
@@ -54,11 +53,13 @@ Foam::incompressibleTwoPhaseVoFMixtureTC::incompressibleTwoPhaseVoFMixtureTC
             "p",
             mesh.time().name(),
             mesh,
-            IOobject::MUST_READ,
+            IOobject::NO_READ,
             IOobject::AUTO_WRITE
         ),
-        mesh
+        mesh,
+        dimensionedScalar("p", dimPressure, 1e5)
     ),
+
     T_
     (
         IOobject
@@ -87,7 +88,7 @@ Foam::incompressibleTwoPhaseVoFMixtureTC::incompressibleTwoPhaseVoFMixtureTC
     
     thermo1_(nullptr),
     thermo2_(nullptr),
-    ////
+    
     nuModel1_(viscosityModel::New(mesh, phase1Name())),
     nuModel2_(viscosityModel::New(mesh, phase2Name())),
 
@@ -152,8 +153,6 @@ Foam::incompressibleTwoPhaseVoFMixtureTC::incompressibleTwoPhaseVoFMixtureTC
         T2.write();
     }
 
-/////////
-    
     const word timeName(mesh.time().name());
 
     // Note: we're writing files to be read in immediately afterwards.
@@ -183,10 +182,6 @@ Foam::incompressibleTwoPhaseVoFMixtureTC::incompressibleTwoPhaseVoFMixtureTC
     species1Name_= thermo1_->species()[0];
     species2Name_= thermo1_->species()[1];
     
-    //thermo1_->validate(phase1Name(), "e");     // making sure that physicalProperties of the Phase is on internalEnergy or Enthalpy
-    //thermo2_->validate(phase2Name(), "e");     // making sure that physicalProperties of the Phase is on internalEnergy or Enthalpy
-    
-  
     // --- Map species indices in each thermo ---
     const speciesTable& sp1=thermo1_->species();
     s1IndexThermo1_ = sp1[species1Name_];
@@ -269,19 +264,21 @@ Foam::incompressibleTwoPhaseVoFMixtureTC::incompressibleTwoPhaseVoFMixtureTC
         )
     );
         
-    correct();  
+    correctComposition();
+    correctThermo(p_);
+    correct();
 }
 
 
 // * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * * //
-void Foam::incompressibleTwoPhaseVoFMixtureTC::correctThermo()
+void Foam::incompressibleTwoPhaseVoFMixtureTC::correctThermo(const volScalarField& p)
 {
     thermo1_->T() = T_;
-    thermo1_->he() = thermo1_->he(p_, T_);
+    thermo1_->he() = thermo1_->he(p, T_);
     thermo1_->correct();
 
     thermo2_->T() = T_;
-    thermo2_->he() = thermo2_->he(p_, T_);
+    thermo2_->he() = thermo2_->he(p, T_);
     thermo2_->correct();
 }
 
@@ -331,27 +328,14 @@ void Foam::incompressibleTwoPhaseVoFMixtureTC::correct()
     );
 
     const volScalarField limitedAlpha2 ("limitedAlpha2", scalar(1) - limitedAlpha1);
-    //dimensionedScalar Rho1_("rho", dimDensity, nuModel1_());
-    //dimensionedScalar Rho2_("rho", dimDensity, nuModel2_());
-    //
-    //Info<< "Correcting incompressibleTwoPhaseVoFMixtureTC : rho1 = " << rho1_ << "  and rho2 = " << rho2_ << nl << endl;
-    //rho_ = alpha1()*Rho1_ + alpha2()*Rho2_;
-
-
-    // Average kinematic viscosity calculated from dynamic viscosity
-     //   nu_ =
-     //   (
-     //       limitedAlpha1*rho1_*nuModel1_->nu()
-     //   + (scalar(1) - limitedAlpha1)*rho2_*nuModel2_->nu()
-     //   )/(limitedAlpha1*rho1_ + (scalar(1) - limitedAlpha1)*rho2_);
  
     // recoupling to navier stokes
 
-        rho_ = limitedAlpha1*thermo1().rho() + limitedAlpha2*thermo2().rho(); // recoupling to navier stokes
+        rho_ = limitedAlpha1*thermo1().rho() + limitedAlpha2*thermo2().rho(); 
 
         nu_ =
-        ( limitedAlpha1*thermo1().rho()*thermo1().nu()      //was in incompressibleVoF "nuModel1_->nu()"
-        + limitedAlpha2*thermo2().rho()*thermo2().nu()      //was in incompressibleVoF "nuModel2_->nu()"
+        ( limitedAlpha1*thermo1().rho()*thermo1().nu()      
+        + limitedAlpha2*thermo2().rho()*thermo2().nu()      
         )/rho_;
     
 }

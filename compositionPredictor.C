@@ -36,8 +36,6 @@ License
 
 void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 {
-  Info<< "compositionPredictor() called, Meldung from compositionPredictor.C " <<  nl;
-
   // --- Phase densities from thermo (rhoConst -> still a volScalarField) ---
     const volScalarField& rho1(mixture.thermo1().rho());
     const volScalarField& rho2(mixture.thermo2().rho());
@@ -54,7 +52,7 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 
   // bounded alphas (ALPHA is 0<=alpha<=1)
     // alphas smaller than aTol are set to 0   
-    const scalar aTol = 1e-4; 
+    const scalar aTol = 1e-5; 
     volScalarField a("a", min(max(alpha1, scalar(0)), scalar(1))); // Alpha1 only between 0 and 1
     volScalarField ALPHA1("ALPHA1",(scalar(1) - pos(aTol-a) - pos(a-(scalar(1)-aTol)))*a + pos(a-(scalar(1)-aTol)));
     volScalarField ALPHA2("ALPHA2", scalar(1) - ALPHA1);
@@ -67,7 +65,6 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     
     volScalarField C1 ("C1", alpha1*C1L + alpha2*C1G); // Concentration of Species 1  
     volScalarField C2 ("C2", alpha1*C2L + alpha2*C2G); // Concentration of Species 2
-   //Info<< "rho1 beträgt: " << rho1.internalField()<<nl<<nl<< " rho2 beträgt: " << rho2.internalField() << endl;
 
     volScalarField CL ("CL", C1L + C2L); // Concentration of the liquid phase
     volScalarField CG ("CG", C1G + C2G); // Concentration of the gas phase
@@ -84,7 +81,7 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     
     // taking the boundarys from the Mass fraction of Species1 phase 1 
     const wordList XpatchTypes = Y1L.boundaryField().types();
-    //Info<<"1"<<endl;;
+
     // creating the concentration fields
       if (!mesh.foundObject<volScalarField>(X1name))
       {
@@ -186,7 +183,6 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 
           XinitDone = true;
       }
-    // Info<<"2"<<endl;;
 
   // VLE constant 
     const volScalarField& T = mixture.T();
@@ -223,25 +219,6 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
         );
     }
 
-    /*///// debugging 
-
-    Info<< "p used for VLE internal min/max = "
-    << min(pVLE).value() << " / " << max(pVLE).value() << nl;
-
-forAll(pVLE.boundaryField(), patchi)
-{
-    Info<< "p used for VLE patch " << pVLE.boundaryField()[patchi].patch().name()
-        << " type=" << pVLE.boundaryField()[patchi].type()
-        << " min/max = "
-        << min(pVLE.boundaryField()[patchi]) << " / "
-        << max(pVLE.boundaryField()[patchi])
-        << nl;
-}
-
-
-
-Info<< endl;
-//////// debugging*/
     volScalarField K1eq("K1eq", vle1Ptr->K(pVLE, T));
     volScalarField K2eq("K2eq", vle2Ptr->K(pVLE, T));
 
@@ -252,7 +229,6 @@ Info<< endl;
         << " / " << max(A12).value() << endl;
   
     volScalarField Kgcst("Kgcst",A12/(1+(A12-1)*X1));
-    // Info<<"3"<<endl;;
   
   // ---------------------------------------------------------------------
   // Concentration Equation GCST 
@@ -297,8 +273,6 @@ Info<< endl;
         Kgcst=A12/(1+(A12-1)*X1);
         fractionL = (ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG);
         fractionG = Kgcst*(ALPHA1*CL + ALPHA2*CG)/(ALPHA1*CL + Kgcst*ALPHA2*CG);
-        //volScalarField Mmix("Mmix", ALPHA1*CL + ALPHA2*CG);
-        //volScalarField denomenatorGCST("denomenatorGCST", ALPHA1*CL + Kgcst*ALPHA2*CG);
 
         D1fL = D1Eff*fractionL;
         D2fG = D2Eff*fractionG;
@@ -318,30 +292,18 @@ Info<< endl;
             "alphaCGPhi2",
             alphaPhi2*fvc::interpolate(CG)
         );
-        
-        volScalarField contErrCL1 // correction of the numerical instabilties of the speed, which violates the conservation of mass
-        (
-            "contErrCL1", fvc::ddt(alpha1, CL) + fvc::div(alphaCLPhi1)
-        );
-
-        volScalarField contErrCG2 // correction of the numerical instabilties of the speed, which violates the conservation of mass
-        (
-            "contErrCG2", fvc::ddt(alpha2, CG) + fvc::div(alphaCGPhi2)
-        );
-      /* fvScalarMatrix X1Eqn
+        // correction of the numerical speed instabilties, which violates continuity
+          volScalarField contErrCL1 
           (
-              fvm::ddt(C, X1)
-            + fvm::div(Cphi, X1)
-            - fvm::Sp(fvc::ddt(C) + fvc::div(Cphi), X1) // stabilisation by subtracting X1*(ddt(C) + div(Cphi))
-              - contErrCG2*X1
-              - contErrCL1*X1
-            ==
-              fvm::laplacian(D1fL, X1)
-            + fvm::laplacian(D2fG, X1)
-            + fvc::div(J1Corr)
-            + fvc::div(J2Corr)
+              "contErrCL1", fvc::ddt(alpha1, CL) + fvc::div(alphaCLPhi1)
           );
-       */ fvScalarMatrix X1Eqn
+
+          volScalarField contErrCG2 
+          (
+              "contErrCG2", fvc::ddt(alpha2, CG) + fvc::div(alphaCGPhi2)
+          );
+      
+        fvScalarMatrix X1Eqn
         (
             correction
             (
@@ -362,7 +324,6 @@ Info<< endl;
             + fvc::div(J2Corr)
         );
 
-
         X1Eqn.relax();
         fvConstraints().constrain(X1Eqn);
         X1Eqn.solve();
@@ -379,12 +340,10 @@ Info<< endl;
         X1.write();
         X2.write();
     }
-    // Info<<"4"<<endl;;
 
   // ---------------------------------------------------------------------
   // back-substitution to  mass fractions
   // ---------------------------------------------------------------------
-    // Info<<"5"<<endl;;
     
     volScalarField ALPHA1_pure("ALPHA1_pure", pos(ALPHA1 - (scalar(1) - aTol)));  // only cells with pure phases, mixed cells 0
     volScalarField ALPHA2_pure("ALPHA2_pure", pos(ALPHA2 - (scalar(1) - aTol)));  // only cells with pure phases, mixed cells 0 
@@ -447,11 +406,10 @@ Info<< endl;
       nMoles1.correctBoundaryConditions();
       nMoles2.correctBoundaryConditions();
       nMolesTotal.correctBoundaryConditions();
-    //Info<<"6"<<endl;;
   
   // Push mass-fractions into thermo objects + update derived properties
     mixture.correctComposition();
-    mixture.correctThermo();
+    mixture.correctThermo(p);
     mixture.correct();
 }
 

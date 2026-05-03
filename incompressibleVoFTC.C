@@ -60,30 +60,8 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
 
     p
     (
-        IOobject
-        (
-            "p",
-            runTime.name(),
-            mesh,
-            IOobject::NO_READ,
-            IOobject::AUTO_WRITE
-        ),
-        p_rgh + rho*buoyancy.gh
+        initialiseP()
     ),
-   // H(
-   //     IOobject
-   //     (
-   //       "H",
-   //       runTime.name(),
-   //       mesh,
-   //       IOobject::NO_READ,
-   //       IOobject::NO_WRITE
-   //     ),
-   //     mesh,
-   //     dimensionedScalar("H", dimEnergy/dimMass, 0 ),
-   //     mixture.T().boundaryField().types()
-   //   
-   //   ),
     pressureReference_
     (
         p,
@@ -173,9 +151,7 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
         mesh,
         dimensionedScalar
         (
-            "nMolesTotal",
-            dimMoles/dimVolume,
-            0
+            "nMolesTotal",dimMoles/dimVolume,0
         )
     )
 {
@@ -225,9 +201,6 @@ Foam::solvers::incompressibleVoFTC::~incompressibleVoFTC()
 void Foam::solvers::incompressibleVoFTC::prePredictor()
 {
     twoPhaseVoFSolver::prePredictor();
-    //     original with constant density
-        //   const dimensionedScalar& rho1 = mixture.rho1();
-        //   const dimensionedScalar& rho2 = mixture.rho2();
   
     const volScalarField& rho1 = mixture.thermo1().rho();
     const volScalarField& rho2 = mixture.thermo2().rho();
@@ -281,5 +254,13 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalTransportCorrector()
     thermophysicalTransport.correct();
 }
 
+Foam::volScalarField& Foam::solvers::incompressibleVoFTC::initialiseP()
+{
+    volScalarField& p = mixture.p();
 
+    p = p_rgh + rho*buoyancy.gh;
+    p.correctBoundaryConditions();
+
+    return p;
+}
 // ************************************************************************* //

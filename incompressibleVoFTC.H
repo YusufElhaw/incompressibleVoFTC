@@ -91,7 +91,9 @@ protected:
     // Thermophysical properties
 
         //- Static pressure field
-        volScalarField p;
+        volScalarField& p;
+        volScalarField& initialiseP();
+
 
       //  volScalarField H;
 
@@ -179,7 +181,6 @@ protected:
         {
             return momentumTransport.divDevTau(rho, U);
         }
-
 
 public:
 

@@ -59,9 +59,9 @@ class incompressibleTwoPhaseVoFMixtureTC
 
         Switch totalInternalEnergy_;
 
-        //- Pressure
+        //- Static pressure field, created only to satisfy thermo lookup.
         volScalarField p_;
-
+        
         //- Mixture temperature
         volScalarField T_;
         ////
@@ -135,12 +135,15 @@ public:
         {
             return totalInternalEnergy_;
         }
-                //- Return pressure [Pa]
         volScalarField& p()
         {
             return p_;
         }
 
+        const volScalarField& p() const
+        {
+            return p_;
+        }
         //- Return mixture temperature [K]
         volScalarField& T()
         {
@@ -177,7 +180,7 @@ public:
             return thermo2_();
         }
         //- Correct the thermodynamics of each phase
-        virtual void correctThermo();
+        virtual void correctThermo(const volScalarField& p);
         
         //- Correct the composition of each phase
         virtual void correctComposition();
