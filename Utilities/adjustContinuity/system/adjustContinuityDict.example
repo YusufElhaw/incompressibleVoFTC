@@ -1,0 +1,31 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| adjustContinuityDict                                                   |
+\*---------------------------------------------------------------------------*/
+
+// Velocity field to correct
+field       U;
+
+// Time directory to read/write. For your mapped case this is usually 0.
+time        0;
+
+// One or more patches that may be corrected. Names are arbitrary.
+// A selected patch may contain both local inflow faces and local outflow faces.
+patches     (top bottom);
+
+// Same style as the adjustPhi fatal check: mag(sum(phi))/sum(mag(phi)).
+tolerance   1e-8;
+
+// split = 0.5: symmetric correction
+//   50% of the imbalance is corrected by scaling selected outflow faces,
+//   50% by scaling selected inflow faces.
+// split = 1: only outflow correction
+// split = 0: only inflow correction
+split       0.5;
+
+// true: compute/report only, do not overwrite 0/U
+dryRun      false;
+
+// Write postProcessing/adjustContinuity/<time>/report.dat
+writeReport true;
+
+// ************************************************************************* //
