@@ -1,0 +1,75 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM                                      |
+|  \\    /   O peration     | setCompositionDict                            |
+|   \\  /    A nd           |                                                 |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      setCompositionDict;
+}
+
+// ************************************************************************* //
+// Required species mole fractions.
+// Species and phase names are normally read automatically from:
+//     constant/phaseProperties
+//     constant/physicalProperties.<phase1>/species
+// ------------------------------------------------------------------------- //
+
+cyclohexane
+{
+    liquid 0.5;
+    gas    0.5;
+}
+
+nheptane
+{
+    liquid 0.5;
+    gas    0.5;
+}
+
+// Interface threshold for pure phase cells.
+alphaTol 1e-4;
+
+// Flux used by inletOutlet BCs.
+phi phi;
+
+// Patches where fields get inletOutlet.
+inletOutletPatches
+(
+    top
+    bottom
+);
+
+// Inlet phase for mole-fraction fields on inletOutlet patches.
+patchInletPhases
+{
+    top    liquid;
+    bottom gas;
+}
+
+// Other non-constraint patches.
+defaultPatchType zeroGradient;
+
+// Optional, only needed when p_rgh is gauge/relative but a perfectGas phase
+// should use C = p/(R*T). Can also be phase-specific.
+//pressureOffset 101325;
+//pressureOffset
+//{
+//    gas 101325;
+//}
+
+// Optional field names. The utility also tries .orig automatically.
+//pressureField    p_rgh;
+//temperatureField T;
+
+// Optional gas constant. Default is 8314.46261815324 J/(kmol K).
+//universalGasConstant 8314.46261815324;
+
+// ************************************************************************* //
