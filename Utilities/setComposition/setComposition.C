@@ -129,6 +129,125 @@ bool containsWord(const wordList& words, const word& w)
 
     return false;
 }
+label patchIDByName
+(
+    const fvMesh& mesh,
+    const word& patchName
+)
+{
+    forAll(mesh.boundary(), patchi)
+    {
+        if (mesh.boundary()[patchi].name() == patchName)
+        {
+            return patchi;
+        }
+    }
+
+    return -1;
+}
+void checkPatchListConflicts
+(
+    const fvMesh& mesh,
+    const dictionary& dict
+)
+{
+    wordList inletOutletPatches;
+    wordList fixedValuePatches;
+    wordList zeroGradientPatches;
+
+    if (dict.found("inletOutletPatches"))
+    {
+        dict.lookup("inletOutletPatches") >> inletOutletPatches;
+    }
+
+    if (dict.found("fixedValuePatches"))
+    {
+        dict.lookup("fixedValuePatches") >> fixedValuePatches;
+    }
+
+    if (dict.found("zeroGradientPatches"))
+    {
+        dict.lookup("zeroGradientPatches") >> zeroGradientPatches;
+    }
+
+    // Check if all listed patches exist
+    forAll(inletOutletPatches, i)
+    {
+        if (patchIDByName(mesh, inletOutletPatches[i]) < 0)
+        {
+            FatalErrorInFunction
+                << "Patch '" << inletOutletPatches[i]
+                << "' listed in inletOutletPatches does not exist in the mesh."
+                << nl << exit(FatalError);
+        }
+    }
+
+    forAll(fixedValuePatches, i)
+    {
+        if (patchIDByName(mesh, fixedValuePatches[i]) < 0)
+        {
+            FatalErrorInFunction
+                << "Patch '" << fixedValuePatches[i]
+                << "' listed in fixedValuePatches does not exist in the mesh."
+                << nl << exit(FatalError);
+        }
+    }
+
+    forAll(zeroGradientPatches, i)
+    {
+        if (patchIDByName(mesh, zeroGradientPatches[i]) < 0)
+        {
+            FatalErrorInFunction
+                << "Patch '" << zeroGradientPatches[i]
+                << "' listed in zeroGradientPatches does not exist in the mesh."
+                << nl << exit(FatalError);
+        }
+    }
+
+    // Check conflicts between inletOutletPatches and fixedValuePatches
+    forAll(inletOutletPatches, i)
+    {
+        const word& p = inletOutletPatches[i];
+
+        if (containsWord(fixedValuePatches, p))
+        {
+            FatalErrorInFunction
+                << "Patch '" << p << "' is listed in both "
+                << "inletOutletPatches and fixedValuePatches." << nl
+                << "This is ambiguous. A patch may only appear in one "
+                << "composition boundary-condition list." << nl
+                << "Remove the patch from one of the lists in "
+                << "system/setCompositionDict."
+                << nl << exit(FatalError);
+        }
+
+        if (containsWord(zeroGradientPatches, p))
+        {
+            FatalErrorInFunction
+                << "Patch '" << p << "' is listed in both "
+                << "inletOutletPatches and zeroGradientPatches." << nl
+                << "This is ambiguous. Remove the patch from one of the lists in "
+                << "system/setCompositionDict."
+                << nl << exit(FatalError);
+        }
+    }
+
+    // Check conflicts between fixedValuePatches and zeroGradientPatches
+    forAll(fixedValuePatches, i)
+    {
+        const word& p = fixedValuePatches[i];
+
+        if (containsWord(zeroGradientPatches, p))
+        {
+            FatalErrorInFunction
+                << "Patch '" << p << "' is listed in both "
+                << "fixedValuePatches and zeroGradientPatches." << nl
+                << "This is ambiguous. Remove the patch from one of the lists in "
+                << "system/setCompositionDict."
+                << nl << exit(FatalError);
+        }
+    }
+}
 
 bool containsDynamicWord(const DynamicList<word>& words, const word& w)
 {
@@ -1431,15 +1550,14 @@ word patchScalarType
     const word meshPatchType = mesh.boundaryMesh()[patchi].type();
     const word fieldPatchType = alpha.boundaryField()[patchi].type();
 
+    // Constraint patches must keep their type, e.g. empty, cyclic, symmetry
     if (isConstraintPatchType(meshPatchType, fieldPatchType))
     {
         return fieldPatchType;
     }
 
     wordList inletOutletPatches;
-    const bool hasInletOutletPatchList = dict.found("inletOutletPatches");
-
-    if (hasInletOutletPatchList)
+    if (dict.found("inletOutletPatches"))
     {
         dict.lookup("inletOutletPatches") >> inletOutletPatches;
 
@@ -1448,9 +1566,16 @@ word patchScalarType
             return "inletOutlet";
         }
     }
-    else
+
+    wordList fixedValuePatches;
+    if (dict.found("fixedValuePatches"))
     {
-        return "inletOutlet";
+        dict.lookup("fixedValuePatches") >> fixedValuePatches;
+
+        if (containsWord(fixedValuePatches, patchName))
+        {
+            return "fixedValue";
+        }
     }
 
     wordList zeroGradientPatches;
@@ -1511,7 +1636,7 @@ void writeScalarFieldFile
 
     writeFieldHeader(os, fieldName);
 
-    os  << "dimensions      [];" << nl << nl;
+    os << "dimensions      [0 0 0 0 0 0 0];" << nl << nl;
 
     os  << "internalField   nonuniform List<scalar>" << nl
         << internalValues.size() << nl
@@ -1587,26 +1712,7 @@ void writeScalarFieldFile
                 massFraction
             );
 
-            if (boundaryValuesPtr)
-            {
-                const scalarField& patchValues = (*boundaryValuesPtr)[patchi];
-
-                os  << "        value       nonuniform List<scalar>" << nl
-                    << patchValues.size() << nl
-                    << "(" << nl;
-
-                forAll(patchValues, facei)
-                {
-                    os << patchValues[facei] << nl;
-                }
-
-                os  << ")" << nl
-                    << ";" << nl;
-            }
-            else
-            {
-                os  << "        value       uniform " << val << ";" << nl;
-            }
+            os << "        value       uniform " << val << ";" << nl;
         }
 
         os  << "    }" << nl;
@@ -1635,6 +1741,7 @@ int main(int argc, char *argv[])
     #include "createRegionMeshNoChangers.H"
 
     const dictionary setCompositionDict(systemDict("setCompositionDict", args, mesh));
+    checkPatchListConflicts(mesh, setCompositionDict);
 
     const compositionInput c = readCompositionInput(runTime, mesh, setCompositionDict);
 

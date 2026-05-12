@@ -52,30 +52,16 @@ volScalarField pFromFile
     mesh
 );
 
-IOdictionary pDict
-(
-    IOobject
-    (
-        "p",
-        runTime.name(),
-        mesh,
-        IOobject::MUST_READ,
-        IOobject::NO_WRITE,
-        false
-    )
-);
-
-// Werte übernehmen
 p.primitiveFieldRef() = pFromFile.primitiveField();
 
-// Patch-Typen wirklich neu aus 0/p aufbauen
-p.boundaryFieldRef().readField
-(
-    p,
-    pDict.subDict("boundaryField")
-);
-
-//p.correctBoundaryConditions();
+forAll(p.boundaryField(), patchi)
+{
+    p.boundaryFieldRef().set
+    (
+        patchi,
+        pFromFile.boundaryField()[patchi].clone(p).ptr()
+    );
+}
 
 Info<< "p patch types:" << nl
     << p.boundaryField().types() << nl << endl;
