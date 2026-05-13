@@ -1143,13 +1143,52 @@ void phaseMolarConcentration
                 const fvPatchScalarField& pPf = p.boundaryField()[patchi];
                 const fvPatchScalarField& TPf = T.boundaryField()[patchi];
 
+                tmp<scalarField> tpInternal = pPf.patchInternalField();
+                tmp<scalarField> tTInternal = TPf.patchInternalField();
+
+                const scalarField& pInternalPatch = tpInternal();
+                const scalarField& TInternalPatch = tTInternal();
+
+                const word pPatchType = pPf.type();
+                const word TPatchType = TPf.type();
+
+                const bool useInternalP =
+                (
+                    pPatchType == "fixedFluxPressure"
+                || pPatchType == "fixedFluxExtrapolatedPressure"
+                || pPatchType == "zeroGradient"
+                || pPatchType == "calculated"
+                );
+
+                const bool useInternalT =
+                (
+                    TPatchType == "zeroGradient"
+                || TPatchType == "calculated"
+                );
+
                 CBoundary.set(patchi, new scalarField(pPf.size(), 0.0));
                 scalarField& CPf = CBoundary[patchi];
 
                 forAll(CPf, facei)
                 {
-                    const scalar pAbs = pPf[facei] + pOffset;
-                    const scalar Ti = TPf[facei];
+                    scalar pRaw = useInternalP ? pInternalPatch[facei] : pPf[facei];
+                    scalar Ti   = useInternalT ? TInternalPatch[facei] : TPf[facei];
+
+                    // Safety fallback:
+                    // Some pressure boundary conditions store a dummy value such as 0.
+                    // If the patch value is unusable but the adjacent cell value is valid,
+                    // use the adjacent cell value.
+                    if ((pRaw + pOffset) <= VSMALL && (pInternalPatch[facei] + pOffset) > VSMALL)
+                    {
+                        pRaw = pInternalPatch[facei];
+                    }
+
+                    if (Ti <= VSMALL && TInternalPatch[facei] > VSMALL)
+                    {
+                        Ti = TInternalPatch[facei];
+                    }
+
+                    const scalar pAbs = pRaw + pOffset;
 
                     if (Ti <= VSMALL)
                     {
@@ -1158,7 +1197,10 @@ void phaseMolarConcentration
                             << "' is not positive on patch '"
                             << mesh.boundary()[patchi].name()
                             << "' face " << facei
-                            << ": T=" << Ti << nl << exit(FatalError);
+                            << ": T=" << Ti
+                            << ", TInternal=" << TInternalPatch[facei]
+                            << ", TPatchType=" << TPatchType
+                            << nl << exit(FatalError);
                     }
 
                     if (pAbs <= VSMALL)
@@ -1168,10 +1210,14 @@ void phaseMolarConcentration
                             << "' is not positive on patch '"
                             << mesh.boundary()[patchi].name()
                             << "' face " << facei
-                            << ": pField=" << pPf[facei]
+                            << ": pPatch=" << pPf[facei]
+                            << ", pInternal=" << pInternalPatch[facei]
+                            << ", pUsed=" << pRaw
                             << ", pressureOffset=" << pOffset
-                            << ", pAbs=" << pAbs << nl
-                            << "If your p_rgh is relative/gauge pressure, add e.g." << nl
+                            << ", pAbs=" << pAbs
+                            << ", pPatchType=" << pPatchType << nl
+                            << "If both patch and internal pressure are relative/gauge pressure, "
+                            << "add for example:" << nl
                             << "    pressureOffset 101325;" << nl
                             << "to system/setCompositionDict."
                             << nl << exit(FatalError);

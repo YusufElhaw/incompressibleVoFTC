@@ -6,4 +6,12 @@ wclean
 wclean libso fvModels/VoFTurbulenceDamping
 wclean libso fvModels/VoFCavitation
 
+
+wclean libso Utilities/adjustContinuity
+wclean libso Utilities/gasMeanVelocityForce
+wclean libso Utilities/incompressibleVoFCyclic
+wclean libso Utilities/setHoldup
+wclean libso Utilities/prghNonConformalCyclicPressureFvPatchScalarField
+wclean libso Utilities/setComposition
+wclean libso Utilities/totalRefluxPatchGasMeanVelocityForce
 #------------------------------------------------------------------------------

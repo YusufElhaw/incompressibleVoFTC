@@ -12,3 +12,4 @@ Make/linux64GccDPInt32Opt/compositionPredictor.o
 Make/linux64GccDPInt32Opt/incompressibleVoFTC.o
 Make/linux64GccDPInt32Opt/thermophysicalPredictor.C.dep
 Make/linux64GccDPInt32Opt/thermophysicalPredictor.o
+*_DEBUG

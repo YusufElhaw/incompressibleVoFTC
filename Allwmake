@@ -9,4 +9,11 @@ wmake $targetType
 wmake $targetType fvModels/VoFTurbulenceDamping
 wmake $targetType fvModels/VoFCavitation
 
+wmake $targetType Utilities/adjustContinuity
+wmake $targetType Utilities/gasMeanVelocityForce
+wmake $targetType Utilities/incompressibleVoFCyclic
+wmake $targetType Utilities/setHoldup
+wmake $targetType Utilities/prghNonConformalCyclicPressureFvPatchScalarField
+wmake $targetType Utilities/setComposition
+wmake $targetType Utilities/totalRefluxPatchGasMeanVelocityForce
 #------------------------------------------------------------------------------

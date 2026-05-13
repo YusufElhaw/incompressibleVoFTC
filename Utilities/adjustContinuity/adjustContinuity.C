@@ -15,6 +15,7 @@
 #include "Switch.H"
 #include "wordList.H"
 #include "OFstream.H"
+#include "IOstream.H"
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 using namespace Foam;
@@ -63,6 +64,38 @@ int main(int argc, char *argv[])
     const scalar split = adjustDict.lookupOrDefault<scalar>("split", 0.5);
     const Switch dryRun = adjustDict.lookupOrDefault<Switch>("dryRun", false);
     const Switch writeReport = adjustDict.lookupOrDefault<Switch>("writeReport", true);
+
+    // Fallback: value already read from system/controlDict by createTime.H
+    const unsigned int controlDictWritePrecision = IOstream::defaultPrecision();
+
+    unsigned int writePrecision = controlDictWritePrecision;
+    const bool writePrecisionFromDict =
+        adjustDict.readIfPresent("writePrecision", writePrecision);
+
+    // Apply precision before any report/output field writing
+    IOstream::defaultPrecision(writePrecision);
+
+    Info<< "writePrecision used by adjustContinuity: "
+        << writePrecision;
+
+    if (writePrecisionFromDict)
+    {
+        Info<< "  (read from adjustContinuityDict)" << nl;
+    }
+    else
+    {
+        Info<< "  (read from controlDict, you can override it in adjustContinuityDict)" << nl;
+    }
+
+    if (writePrecision < 8)
+    {
+        WarningInFunction
+            << "writePrecision = " << writePrecision
+            << " may be too low for strict continuity checks."
+            << nl
+            << "For mapped velocity fields, use writePrecision 8 or higher, "
+            << "preferably 15." << nl << endl;
+    }
 
     if (split < 0 || split > 1)
     {
@@ -346,6 +379,7 @@ int main(int argc, char *argv[])
             << "time " << timeName << "\n"
             << "patches " << patchNames << "\n"
             << "tolerance " << tolerance << "\n"
+            << "writePrecision " << writePrecision << "\n"
             << "initialNetFlux " << netFlux << "\n"
             << "initialTotalFluxAbs " << totalFluxAbs << "\n"
             << "initialRelativeError " << initialRelativeError << "\n"
