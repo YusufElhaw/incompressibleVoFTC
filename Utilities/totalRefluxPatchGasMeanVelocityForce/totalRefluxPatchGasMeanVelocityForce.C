@@ -1203,22 +1203,10 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::constrain
 
     const scalar gradP = gradP0_ + dGradP_;
 
-    Info<< "Total-reflux gas pressure gradient source: alpha = "
-        << alpha1.name()
-        << ", alphaPhi = " << actualAlphaPhiName(alpha1)
-        << ", liquid QL = " << liquidFlowRate_
-        << ", patch area A0 = " << patchArea_
-        << ", instantaneous liquid loading B_L_inst = " << instantLiquidLoading_
-        << ", filtered liquid loading B_L = " << liquidLoading_
+        Info<< "Total-reflux gas pressure gradient source:"
+        << "  filtered liquid loading B_L = " << liquidLoading_
         << ", filter time = " << averagingInterval_
-        << ", response = " << rAUeff
-        << ", accumulated time = " << accumulatedTime_
-        << ", rhoL = " << rhoLiquidPatchMean_
-        << ", rhoG = " << rhoGasPatchMean_
-        << ", density source = " << densitySource_
-        << ", gas direction = " << gasDirection_
-        << ", target jG = " << jGtarget
-        << ", uncorrected jG = " << jGbarAve
+        << ", jG target/actual= " << jGtarget << "/" << jGbarAve
         << ", pressure gradient = " << gradP
         << endl;
 

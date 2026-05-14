@@ -1408,27 +1408,67 @@ compositionInput readCompositionInput
 
     return c;
 }
+bool isNonConformalCyclicPatch
+(
+    const fvMesh& mesh,
+    const volScalarField& alpha,
+    const label patchi
+)
+{
+    const word meshPatchType = mesh.boundaryMesh()[patchi].type();
+    const word fieldPatchType = alpha.boundaryField()[patchi].type();
 
+    return
+    (
+        meshPatchType == "nonConformalCyclic"
+     || fieldPatchType == "nonConformalCyclic"
+    );
+}
+
+
+bool isNonConformalErrorPatch
+(
+    const fvMesh& mesh,
+    const volScalarField& alpha,
+    const label patchi
+)
+{
+    const word meshPatchType = mesh.boundaryMesh()[patchi].type();
+    const word fieldPatchType = alpha.boundaryField()[patchi].type();
+
+    return
+    (
+            meshPatchType == "nonConformalError"
+        ||  fieldPatchType == "nonConformalError"
+    );
+}
 bool isConstraintPatchType(const word& meshPatchType, const word& fieldPatchType)
 {
     return
     (
-        meshPatchType == "empty"
-     || meshPatchType == "cyclic"
-     || meshPatchType == "cyclicAMI"
-     || meshPatchType == "processor"
-     || meshPatchType == "processorCyclic"
-     || meshPatchType == "symmetryPlane"
-     || meshPatchType == "symmetry"
-     || meshPatchType == "wedge"
-     || fieldPatchType == "empty"
-     || fieldPatchType == "cyclic"
-     || fieldPatchType == "cyclicAMI"
-     || fieldPatchType == "processor"
-     || fieldPatchType == "processorCyclic"
-     || fieldPatchType == "symmetryPlane"
-     || fieldPatchType == "symmetry"
-     || fieldPatchType == "wedge"
+            meshPatchType == "empty"
+        ||  meshPatchType == "cyclic"
+        ||  meshPatchType == "cyclicSlip"
+        ||  meshPatchType == "processor"
+        ||  meshPatchType == "processorCyclic"
+        ||  meshPatchType == "nonConformalProcessorCyclic"
+        ||  meshPatchType == "symmetryPlane"
+        ||  meshPatchType == "symmetry"
+        ||  meshPatchType == "wedge"
+        ||  meshPatchType == "internal"
+        ||  meshPatchType == "nonConformalError"
+
+        ||  fieldPatchType == "empty"
+        ||  fieldPatchType == "cyclic"
+        ||  fieldPatchType == "cyclicSlip"
+        ||  fieldPatchType == "processor"
+        ||  fieldPatchType == "processorCyclic"
+        ||  fieldPatchType == "nonConformalProcessorCyclic"
+        ||  fieldPatchType == "symmetryPlane"
+        ||  fieldPatchType == "symmetry"
+        ||  fieldPatchType == "wedge"
+        ||  fieldPatchType == "internal"
+        ||  fieldPatchType == "nonConformalError"
     );
 }
 
@@ -1596,6 +1636,11 @@ word patchScalarType
     const word meshPatchType = mesh.boundaryMesh()[patchi].type();
     const word fieldPatchType = alpha.boundaryField()[patchi].type();
 
+    if (isNonConformalErrorPatch(mesh, alpha, patchi))
+    {
+        return "nonConformalError";
+    }
+
     // Constraint patches must keep their type, e.g. empty, cyclic, symmetry
     if (isConstraintPatchType(meshPatchType, fieldPatchType))
     {
@@ -1705,10 +1750,16 @@ void writeScalarFieldFile
     {
         const word& patchName = mesh.boundary()[patchi].name();
         const word patchType = patchScalarType(mesh, alpha, patchi, dict);
+        const bool nccPatch = isNonConformalCyclicPatch(mesh, alpha, patchi);
 
         os  << "    " << patchName << nl
             << "    {" << nl
             << "        type        " << patchType << ";" << nl;
+
+        if (nccPatch && patchType != "nonConformalCyclic")
+        {
+            os << "        patchType   nonConformalCyclic;" << nl;
+        }
 
         if (patchType == "inletOutlet")
         {
