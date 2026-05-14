@@ -220,15 +220,21 @@ public:
 
         virtual void compositionPredictor();
 
-        //- Construct and solve the pressure equation in the PISO loop
-        virtual void pressureCorrector();
+       // //- Construct and solve the pressure equation in the PISO loop
+       // virtual void pressureCorrector();
 
         //- Correct the momentum transport
         virtual void momentumTransportCorrector();
 
         //- Correct the thermophysical transport
         virtual void thermophysicalTransportCorrector();
+        // changing the solved pressure to allow cyclic Boundary condition  
+        // was p_rgh due VoFSolver, now p
+            //- Construct and solve the momentum predictor with p
+            virtual void momentumPredictor() override;
 
+            //- Construct and solve the pressure equation directly for p
+            virtual void pressureCorrector() override;
 
     // Member Operators
 

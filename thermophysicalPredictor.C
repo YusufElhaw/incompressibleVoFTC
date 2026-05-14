@@ -50,13 +50,11 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
         Info<< "Energy Equation Picard iteration "
             << picardIter + 1 << "/" << nEnergyPicard << endl;
 
-        // Optional, falls rho sich durch T stark ändert
-        p = p_rgh + rho*buoyancy.gh;
-        p.correctBoundaryConditions();
 
         // Thermo-Felder passend zum aktuellen T und p aktualisieren
         mixture.correctThermo(p);
         mixture.correct();
+        p_rgh_ = p - rho*buoyancy.gh;
 
         const volScalarField& rho1 = mixture.thermo1().rho();
         const volScalarField& rho2 = mixture.thermo2().rho();
@@ -152,7 +150,9 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
         mixture.correctThermo(p);
         mixture.correct();
     }
-
+    
+    p_rgh_ = p - rho*buoyancy.gh;
+    
     Etherm =
         alpha1*mixture.thermo1().rho()*mixture.thermo1().he()
       + alpha2*mixture.thermo2().rho()*mixture.thermo2().he();

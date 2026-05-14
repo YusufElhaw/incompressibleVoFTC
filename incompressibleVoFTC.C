@@ -65,10 +65,10 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
     pressureReference_
     (
         p,
-        p_rgh,
+       // p_rgh,
         pimple.dict()
     ),
-   alphaRhoPhi1
+    alphaRhoPhi1
     (
         IOobject::groupName("alphaRhoPhi", alpha1.group()),
         fvc::interpolate(mixture.thermo1().rho())*alphaPhi1
@@ -155,6 +155,13 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
         )
     )
 {
+    mesh.schemes().setFluxRequired(p.name());
+    
+    mixture.correctThermo(p);
+    mixture.correct();
+
+    p_rgh_ = p - rho*buoyancy.gh;
+
     if (correctPhi || mesh.topoChanging())
     {
         rAU = new volScalarField
@@ -180,7 +187,7 @@ Foam::solvers::incompressibleVoFTC::incompressibleVoFTC(fvMesh& mesh)
         (
             phi_,
             U,
-            p_rgh,
+            p,
             rAU,
             autoPtr<volScalarField>(),
             pressureReference(),
@@ -236,10 +243,10 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalTransportPredictor()
 }
 
 
-void Foam::solvers::incompressibleVoFTC::pressureCorrector()
-{
-    incompressiblePressureCorrector(p);
-}
+//void Foam::solvers::incompressibleVoFTC::pressureCorrector()
+//{
+//    incompressiblePressureCorrector(p);
+//}
 
 
 
@@ -258,9 +265,32 @@ Foam::volScalarField& Foam::solvers::incompressibleVoFTC::initialiseP()
 {
     volScalarField& p = mixture.p();
 
-    p = p_rgh + rho*buoyancy.gh;
-    p.correctBoundaryConditions();
+    Info<< "Reading static pressure p for incompressibleVoFTC" << nl;
+
+    volScalarField pFromFile
+    (
+        IOobject
+        (
+            "p",
+            runTime.name(),
+            mesh,
+            IOobject::MUST_READ,
+            IOobject::NO_WRITE,
+            false
+        ),
+        mesh
+    );
+
+    p.primitiveFieldRef() = pFromFile.primitiveField();
+
+    forAll(p.boundaryField(), patchi)
+    {
+        p.boundaryFieldRef().set
+        (
+            patchi,
+            pFromFile.boundaryField()[patchi].clone(p).ptr()
+        );
+    }
 
     return p;
-}
-// ************************************************************************* //
+}// ************************************************************************* //

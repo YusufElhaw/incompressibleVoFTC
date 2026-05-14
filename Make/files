@@ -7,6 +7,8 @@ VLEConstant/VLEConstant.C
 compositionPredictor.C
 thermophysicalPredictor.C
 alphaSuSp.C
+momentumPredictor.C
+pressureCorrector.C
 incompressibleVoFTC.C
 
 LIB = $(FOAM_USER_LIBBIN)/libincompressibleVoFTC
