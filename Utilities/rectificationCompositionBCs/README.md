@@ -1,0 +1,345 @@
+# rectificationCompositionBCs
+
+Dynamic scalar boundary conditions for total-reflux rectification simulations with `incompressibleVoFTC`.
+
+The library provides two OpenFOAM-v13 `fvPatchScalarField` boundary conditions for mole-fraction fields such as:
+
+```foam
+cyclohexane.X
+nHeptane.X
+```
+
+Available types:
+
+```foam
+inletOutletCondensator
+inletOutletBoiler
+```
+
+## Phase detection
+
+The liquid phase is detected from the single existing/registered field:
+
+```text
+0/alpha.<phase>
+```
+
+In the intended `incompressibleVoFTC` setup there is only one `alpha.<phase>` field, and this field is always the liquid volume fraction.
+
+Example:
+
+```text
+0/alpha.liquid
+```
+
+means:
+
+```text
+liquid phase = liquid
+gas phase    = the other phase in constant/phaseProperties
+```
+
+If `constant/phaseProperties` contains:
+
+```foam
+phases (gas liquid);
+```
+
+and the case contains:
+
+```text
+0/alpha.liquid
+```
+
+then the BC still detects:
+
+```text
+liquid phase = liquid
+gas phase    = gas
+```
+
+So the order in `phaseProperties` does not matter for choosing the liquid phase. The `phaseProperties` file is only used to find the other phase name.
+
+The user does **not** specify `phi`, `samplePhi`, `A12Field`, `useA12Field`, or constant `A12` in the boundary file. These names are determined internally.
+
+## Build
+
+```bash
+cd rectificationCompositionBCs
+./Allwmake
+```
+
+Add the library to `system/controlDict`:
+
+```foam
+libs
+(
+    "librectificationCompositionBCs.so"
+);
+```
+
+## General local switching
+
+Both boundary conditions inherit from `mixedFvPatchScalarField` and behave locally like an `inletOutlet` condition.
+
+For each boundary face:
+
+```text
+selected phi < 0 -> inflow  -> dynamic fixedValue
+selected phi > 0 -> outflow -> zeroGradient
+```
+
+OpenFOAM's usual sign convention is used: positive boundary flux leaves the CFD domain, negative boundary flux enters the CFD domain.
+
+## Condensator
+
+The `inletOutletCondensator` condition represents a total-reflux condenser.
+
+Physical meaning:
+
+```text
+outgoing vapour/gas composition -> incoming liquid composition
+```
+
+Internally it uses:
+
+```text
+phi       = alphaPhi.<liquidPhase>
+samplePhi = alphaPhi.<gasPhase>
+```
+
+Example with:
+
+```text
+0/alpha.liquid
+```
+
+and:
+
+```foam
+phases (gas liquid);
+```
+
+becomes internally:
+
+```text
+phi       = alphaPhi.liquid
+samplePhi = alphaPhi.gas
+```
+
+The local switching is therefore:
+
+```text
+alphaPhi.<liquidPhase> < 0 -> liquid inflow  -> dynamic fixedValue
+alphaPhi.<liquidPhase> > 0 -> liquid outflow -> zeroGradient
+```
+
+The measured condenser value is calculated from the outgoing gas flux:
+
+```text
+X_in = sum(max(alphaPhi.<gasPhase>, 0)*X_patchInternal)
+     / sum(max(alphaPhi.<gasPhase>, 0))
+```
+
+The summation is performed over all selected patches and over all MPI ranks. The measured value uses `patchInternalField()`, not the imposed boundary value.
+
+Minimal example:
+
+```foam
+top
+{
+    type        inletOutletCondensator;
+    value       uniform 0;
+}
+```
+
+multi-patch example:
+
+```foam
+top1
+{
+    type        inletOutletCondensator;
+    group       topCondensator;
+    value       uniform 0;
+}
+
+top2
+{
+    type        inletOutletCondensator;
+    group       topCondensator;
+    value       uniform 0;
+}
+```
+
+All patches with the same `group` and the same boundary-condition type are coupled and receive the same dynamic inlet value.
+
+## Boiler
+
+The `inletOutletBoiler` condition represents a total-reflux boiler/reboiler.
+
+Physical meaning:
+
+```text
+outgoing liquid composition -> equilibrium incoming gas composition
+```
+
+Internally it uses:
+
+```text
+phi       = alphaPhi.<gasPhase>
+samplePhi = alphaPhi.<liquidPhase>
+A12       = volScalarField A12
+```
+
+Example with:
+
+```text
+0/alpha.liquid
+```
+
+and:
+
+```foam
+phases (gas liquid);
+```
+
+becomes internally:
+
+```text
+phi       = alphaPhi.gas
+samplePhi = alphaPhi.liquid
+A12       = A12
+```
+
+The local switching is therefore:
+
+```text
+alphaPhi.<gasPhase> < 0 -> gas inflow  -> dynamic fixedValue
+alphaPhi.<gasPhase> > 0 -> gas outflow -> zeroGradient
+```
+
+The boiler first measures the outgoing liquid mole fraction:
+
+```text
+x = sum(max(alphaPhi.<liquidPhase>, 0)*X_patchInternal)
+  / sum(max(alphaPhi.<liquidPhase>, 0))
+```
+
+It also measures the outgoing-flux-weighted relative volatility from the registered field `A12`:
+
+```text
+A12mean = sum(max(alphaPhi.<liquidPhase>, 0)*A12_patchInternal)
+        / sum(max(alphaPhi.<liquidPhase>, 0))
+```
+
+Then it computes the incoming gas mole fraction from:
+
+```text
+y = A12mean*x/(1 + (A12mean - 1)*x)
+```
+
+Minimal example:
+
+```foam
+bottom
+{
+    type        inletOutletBoiler;
+    value       uniform 0;
+}
+```
+
+multi-patch example:
+
+```foam
+bottom1
+{
+    type        inletOutletBoiler;
+    group       bottomBoiler;
+    value       uniform 0;
+}
+
+bottom2
+{
+    type        inletOutletBoiler;
+    group       bottomBoiler;
+    value       uniform 0;
+}
+```
+
+The boiler always expects a registered `volScalarField` named:
+
+```foam
+A12
+```
+
+This is the field generated by `compositionPredictor` in `incompressibleVoFTC`.
+
+If `A12` is missing when the boiler BC updates, the boundary condition aborts with a clear error.
+
+## Multi-patch coupling
+
+The recommended syntax is `group`.
+
+All patches with the same BC type and the same group name are coupled together.
+
+Example:
+
+```foam
+group topCondensator;
+```
+
+or:
+
+```foam
+group bottomBoiler;
+```
+
+## Explicit patch lists
+
+Instead of `group`, an explicit patch list can be used:
+
+```foam
+top1
+{
+    type        inletOutletCondensator;
+    patches     (top1 top2 top3);
+    value       uniform 0;
+}
+```
+
+The current patch is added automatically if it is missing.
+
+Legacy entries are still accepted:
+
+```foam
+otherCondensatorPatches (top2 top3);
+otherBoilerPatches      (bottom2 bottom3);
+```
+
+## Optional entries
+
+```foam
+group       topCondensator;
+patches     (top1 top2 top3);
+relax       1;
+inletValue  0;
+minValue    0;
+maxValue    1;
+minFlux     1e-300;
+```
+
+`relax` is numerical damping for the dynamic inlet value. `relax 1` means no damping.
+
+`inletValue` is a restart/fallback value only. In normal operation, the value is calculated dynamically.
+
+`value` should be present for OpenFOAM restart/read consistency.
+
+## Notes
+
+- The liquid phase is detected from the existing/registered `alpha.<phase>` field.
+- The gas phase is the other phase listed in `constant/phaseProperties`.
+- The condensator samples outgoing gas flux and imposes incoming liquid composition.
+- The boiler samples outgoing liquid flux and imposes incoming gas composition using the field `A12`.
+- Positive flux means outflow from the CFD domain.
+- Negative flux means inflow into the CFD domain.
+- The measured composition uses `patchInternalField()`, not the imposed boundary value.

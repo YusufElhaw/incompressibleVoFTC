@@ -151,100 +151,61 @@ void checkPatchListConflicts
     const dictionary& dict
 )
 {
-    wordList inletOutletPatches;
-    wordList fixedValuePatches;
-    wordList zeroGradientPatches;
+    wordList listNames(5);
+    listNames[0] = "inletOutletPatches";
+    listNames[1] = "fixedValuePatches";
+    listNames[2] = "zeroGradientPatches";
+    listNames[3] = "condensatorPatches";
+    listNames[4] = "boilerPatches";
 
-    if (dict.found("inletOutletPatches"))
-    {
-        dict.lookup("inletOutletPatches") >> inletOutletPatches;
-    }
+    PtrList<wordList> lists(listNames.size());
 
-    if (dict.found("fixedValuePatches"))
+    forAll(listNames, listi)
     {
-        dict.lookup("fixedValuePatches") >> fixedValuePatches;
-    }
+        lists.set(listi, new wordList());
 
-    if (dict.found("zeroGradientPatches"))
-    {
-        dict.lookup("zeroGradientPatches") >> zeroGradientPatches;
-    }
-
-    // Check if all listed patches exist
-    forAll(inletOutletPatches, i)
-    {
-        if (patchIDByName(mesh, inletOutletPatches[i]) < 0)
+        if (dict.found(listNames[listi]))
         {
-            FatalErrorInFunction
-                << "Patch '" << inletOutletPatches[i]
-                << "' listed in inletOutletPatches does not exist in the mesh."
-                << nl << exit(FatalError);
+            dict.lookup(listNames[listi]) >> lists[listi];
+        }
+
+        forAll(lists[listi], i)
+        {
+            const word& p = lists[listi][i];
+
+            if (patchIDByName(mesh, p) < 0)
+            {
+                FatalErrorInFunction
+                    << "Patch '" << p << "' listed in "
+                    << listNames[listi]
+                    << " does not exist in the mesh."
+                    << nl << exit(FatalError);
+            }
         }
     }
 
-    forAll(fixedValuePatches, i)
+    forAll(listNames, i)
     {
-        if (patchIDByName(mesh, fixedValuePatches[i]) < 0)
+        for (label j = i + 1; j < listNames.size(); ++j)
         {
-            FatalErrorInFunction
-                << "Patch '" << fixedValuePatches[i]
-                << "' listed in fixedValuePatches does not exist in the mesh."
-                << nl << exit(FatalError);
-        }
-    }
+            forAll(lists[i], pi)
+            {
+                const word& p = lists[i][pi];
 
-    forAll(zeroGradientPatches, i)
-    {
-        if (patchIDByName(mesh, zeroGradientPatches[i]) < 0)
-        {
-            FatalErrorInFunction
-                << "Patch '" << zeroGradientPatches[i]
-                << "' listed in zeroGradientPatches does not exist in the mesh."
-                << nl << exit(FatalError);
-        }
-    }
-
-    // Check conflicts between inletOutletPatches and fixedValuePatches
-    forAll(inletOutletPatches, i)
-    {
-        const word& p = inletOutletPatches[i];
-
-        if (containsWord(fixedValuePatches, p))
-        {
-            FatalErrorInFunction
-                << "Patch '" << p << "' is listed in both "
-                << "inletOutletPatches and fixedValuePatches." << nl
-                << "This is ambiguous. A patch may only appear in one "
-                << "composition boundary-condition list." << nl
-                << "Remove the patch from one of the lists in "
-                << "system/setCompositionDict."
-                << nl << exit(FatalError);
-        }
-
-        if (containsWord(zeroGradientPatches, p))
-        {
-            FatalErrorInFunction
-                << "Patch '" << p << "' is listed in both "
-                << "inletOutletPatches and zeroGradientPatches." << nl
-                << "This is ambiguous. Remove the patch from one of the lists in "
-                << "system/setCompositionDict."
-                << nl << exit(FatalError);
-        }
-    }
-
-    // Check conflicts between fixedValuePatches and zeroGradientPatches
-    forAll(fixedValuePatches, i)
-    {
-        const word& p = fixedValuePatches[i];
-
-        if (containsWord(zeroGradientPatches, p))
-        {
-            FatalErrorInFunction
-                << "Patch '" << p << "' is listed in both "
-                << "fixedValuePatches and zeroGradientPatches." << nl
-                << "This is ambiguous. Remove the patch from one of the lists in "
-                << "system/setCompositionDict."
-                << nl << exit(FatalError);
+                if (containsWord(lists[j], p))
+                {
+                    FatalErrorInFunction
+                        << "Patch '" << p << "' is listed in both "
+                        << listNames[i] << " and " << listNames[j] << "."
+                        << nl
+                        << "This is ambiguous. A patch may only appear in one "
+                        << "composition boundary-condition list."
+                        << nl
+                        << "Remove the patch from one of the lists in "
+                        << "system/setCompositionDict."
+                        << nl << exit(FatalError);
+                }
+            }
         }
     }
 }
@@ -1629,10 +1590,14 @@ word patchScalarType
     const fvMesh& mesh,
     const volScalarField& alpha,
     const label patchi,
-    const dictionary& dict
+    const dictionary& dict,
+    const compositionInput& c,
+    const word& fieldSpecies,
+    const bool massFraction
 )
 {
     const word& patchName = mesh.boundary()[patchi].name();
+
     const word meshPatchType = mesh.boundaryMesh()[patchi].type();
     const word fieldPatchType = alpha.boundaryField()[patchi].type();
 
@@ -1641,10 +1606,59 @@ word patchScalarType
         return "nonConformalError";
     }
 
-    // Constraint patches must keep their type, e.g. empty, cyclic, symmetry
+    // Constraint patches must keep their constraint type:
+    // empty, cyclic, processor, symmetry, wedge, NCC error, ...
     if (isConstraintPatchType(meshPatchType, fieldPatchType))
     {
         return fieldPatchType;
+    }
+    // Phase-specific mass-fraction fields are not transported.
+    // They are reconstructed algebraically in compositionPredictor from X1/X2
+    // and then corrected with correctBoundaryConditions().
+    if (massFraction)
+    {
+        return "calculated";
+    }
+    // species2.X is not solved. It is always calculated as 1 - species1.X.
+    // Therefore it must not receive its own inlet/outlet physics.
+    if (!massFraction && fieldSpecies == c.species2)
+    {
+        return "calculated";
+    }
+
+    // Condensator / boiler are only meaningful for the solved mole-fraction
+    // field of the light-boiling component, species1.X.
+    if (!massFraction && fieldSpecies == c.species1)
+    {
+        wordList condensatorPatches;
+        if (dict.found("condensatorPatches"))
+        {
+            dict.lookup("condensatorPatches") >> condensatorPatches;
+
+            if (containsWord(condensatorPatches, patchName))
+            {
+                return dict.lookupOrDefault
+                (
+                    "condensatorPatchType",
+                    word("inletOutletCondensator")
+                );
+            }
+        }
+
+        wordList boilerPatches;
+        if (dict.found("boilerPatches"))
+        {
+            dict.lookup("boilerPatches") >> boilerPatches;
+
+            if (containsWord(boilerPatches, patchName))
+            {
+                return dict.lookupOrDefault
+                (
+                    "boilerPatchType",
+                    word("inletOutletBoiler")
+                );
+            }
+        }
     }
 
     wordList inletOutletPatches;
@@ -1745,11 +1759,42 @@ void writeScalarFieldFile
         << "{" << nl;
 
     const word phiName = dict.lookupOrDefault<word>("phi", word("phi"));
+    
+    const word condensatorPatchType =
+        dict.lookupOrDefault
+        (
+            "condensatorPatchType",
+            word("inletOutletCondensator")
+        );
+
+    const word boilerPatchType =
+        dict.lookupOrDefault
+        (
+            "boilerPatchType",
+            word("inletOutletBoiler")
+        );
+
+    
+    const word boilerGroup =
+        dict.lookupOrDefault("boilerGroup", word("bottomBoiler"));
+    const word condensatorGroup =
+        dict.lookupOrDefault("condensatorGroup", word("topCondensator"));
+
 
     forAll(mesh.boundary(), patchi)
     {
         const word& patchName = mesh.boundary()[patchi].name();
-        const word patchType = patchScalarType(mesh, alpha, patchi, dict);
+        const word patchType =
+            patchScalarType
+            (
+                mesh,
+                alpha,
+                patchi,
+                dict,
+                c,
+                fieldSpecies,
+                massFraction
+            );        
         const bool nccPatch = isNonConformalCyclicPatch(mesh, alpha, patchi);
 
         os  << "    " << patchName << nl
@@ -1795,6 +1840,126 @@ void writeScalarFieldFile
             else
             {
                 os  << "        value       uniform " << inletVal << ";" << nl;
+            }
+        }
+        else if (patchType == condensatorPatchType)
+        {
+            os  << "        group       " << condensatorGroup << ";" << nl;
+
+            if (boundaryValuesPtr)
+            {
+                const scalarField& patchValues = (*boundaryValuesPtr)[patchi];
+
+                os  << "        value       nonuniform List<scalar>" << nl
+                    << patchValues.size() << nl
+                    << "(" << nl;
+
+                forAll(patchValues, facei)
+                {
+                    os << patchValues[facei] << nl;
+                }
+
+                os  << ")" << nl
+                    << ";" << nl;
+            }
+            else
+            {
+                os  << "        value       uniform 0;" << nl;
+            }
+        }
+        else if (patchType == boilerPatchType)
+        {
+            os  << "        group       " << boilerGroup << ";" << nl;
+
+            if (boundaryValuesPtr)
+            {
+                const scalarField& patchValues = (*boundaryValuesPtr)[patchi];
+
+                os  << "        value       nonuniform List<scalar>" << nl
+                    << patchValues.size() << nl
+                    << "(" << nl;
+
+                forAll(patchValues, facei)
+                {
+                    os << patchValues[facei] << nl;
+                }
+
+                os  << ")" << nl
+                    << ";" << nl;
+            }
+            else
+            {
+                os  << "        value       uniform 0;" << nl;
+            }
+        }
+        else if (patchType == "calculated")
+        {
+            if (boundaryValuesPtr)
+            {
+                const scalarField& patchValues = (*boundaryValuesPtr)[patchi];
+
+                os  << "        value       nonuniform List<scalar>" << nl
+                    << patchValues.size() << nl
+                    << "(" << nl;
+
+                forAll(patchValues, facei)
+                {
+                    os << patchValues[facei] << nl;
+                }
+
+                os  << ")" << nl
+                    << ";" << nl;
+            }
+            else if (massFraction)
+            {
+                const fvPatchScalarField& aPatch = alpha.boundaryField()[patchi];
+
+                os  << "        value       nonuniform List<scalar>" << nl
+                    << aPatch.size() << nl
+                    << "(" << nl;
+
+                forAll(aPatch, facei)
+                {
+                    const scalar ac = min(max(aPatch[facei], scalar(0)), scalar(1));
+                    scalar val = 0;
+
+                    if (ac >= 1 - dict.lookupOrDefault<scalar>("alphaTol", 1e-4))
+                    {
+                        if (fieldPhase == c.phase1)
+                        {
+                            val = phaseValue(c, fieldSpecies, c.phase1, true);
+                        }
+                        else
+                        {
+                            val = dummyValue(c, fieldSpecies, c.phase2);
+                        }
+                    }
+                    else if (ac <= dict.lookupOrDefault<scalar>("alphaTol", 1e-4))
+                    {
+                        if (fieldPhase == c.phase2)
+                        {
+                            val = phaseValue(c, fieldSpecies, c.phase2, true);
+                        }
+                        else
+                        {
+                            val = dummyValue(c, fieldSpecies, c.phase1);
+                        }
+                    }
+                    else
+                    {
+                        // Interface patch face: both phase-specific mass fractions are real.
+                        val = phaseValue(c, fieldSpecies, fieldPhase, true);
+                    }
+
+                    os << val << nl;
+                }
+
+                os  << ")" << nl
+                    << ";" << nl;
+            }
+            else
+            {
+                os  << "        value       uniform 0;" << nl;
             }
         }
         else if (patchType == "fixedValue")
