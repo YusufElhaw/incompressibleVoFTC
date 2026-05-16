@@ -1,0 +1,568 @@
+// postprocessing function object caclulate the minimum number of 
+// theoretical stages from Fenske equation based on the current column data. 
+// The results are written to postProcessing/fenskePatchData/0/values.dat 
+// for every time step. 
+fenskePatchData
+    {
+        type            coded;
+        libs            ("libutilityFunctionObjects.so");
+
+        executeControl  timeStep;
+        executeInterval 1;
+
+        writeControl    timeStep;
+        writeInterval   1;
+
+        // field solved by compositionPredictor
+        speciesField    cyclohexane.X;
+
+        // condenser patches
+        topPatches      (top);
+
+        // boiler patches
+        bottomPatches   (bottom);
+
+        codeInclude
+        #{
+            #include "fvMesh.H"
+            #include "volFields.H"
+            #include "surfaceFields.H"
+            #include "IOdictionary.H"
+            #include "OSspecific.H"
+            #include <fstream>
+            #include <cmath>
+        #};
+
+        codeOptions
+        #{
+            -I$(LIB_SRC)/finiteVolume/lnInclude \
+            -I$(LIB_SRC)/meshTools/lnInclude
+        #};
+
+        codeLibs
+        #{
+            -lfiniteVolume \
+            -lmeshTools
+        #};
+
+        codeData
+        #{
+            Foam::word speciesField_;
+            Foam::wordList topPatches_;
+            Foam::wordList bottomPatches_;
+        #};
+
+        localCode
+        #{
+            static Foam::label patchID
+            (
+                const Foam::fvMesh& mesh,
+                const Foam::word& patchName
+            )
+            {
+                const Foam::fvBoundaryMesh& bm = mesh.boundary();
+
+                forAll(bm, patchi)
+                {
+                    if (bm[patchi].name() == patchName)
+                    {
+                        return patchi;
+                    }
+                }
+
+                FatalErrorInFunction
+                    << "Patch " << patchName
+                    << " not found in mesh boundary."
+                    << exit(FatalError);
+
+                return -1;
+            }
+
+
+            static Foam::word liquidPhaseName(const Foam::fvMesh& mesh)
+            {
+                Foam::IOdictionary phaseProperties
+                (
+                    Foam::IOobject
+                    (
+                        "phaseProperties",
+                        mesh.time().constant(),
+                        mesh,
+                        Foam::IOobject::MUST_READ,
+                        Foam::IOobject::NO_WRITE
+                    )
+                );
+
+                Foam::wordList phases;
+                phaseProperties.lookup("phases") >> phases;
+
+                Foam::wordList candidates(phases.size());
+                Foam::label n = 0;
+
+                // Primary: registered alpha.<phase> field.
+                // In incompressibleVoFTC only one alpha.<phase> exists.
+                // That one is the liquid phase.
+                forAll(phases, i)
+                {
+                    const Foam::word alphaName =
+                        Foam::IOobject::groupName("alpha", phases[i]);
+
+                    if (mesh.foundObject<Foam::volScalarField>(alphaName))
+                    {
+                        candidates[n++] = phases[i];
+                    }
+                }
+
+                // Fallback: alpha.<phase> file in current time.
+                if (n == 0)
+                {
+                    forAll(phases, i)
+                    {
+                        const Foam::word alphaName =
+                            Foam::IOobject::groupName("alpha", phases[i]);
+
+                        Foam::IOobject alphaHeader
+                        (
+                            alphaName,
+                            mesh.time().name(),
+                            mesh,
+                            Foam::IOobject::READ_IF_PRESENT,
+                            Foam::IOobject::NO_WRITE,
+                            false
+                        );
+
+                        if (alphaHeader.headerOk())
+                        {
+                            candidates[n++] = phases[i];
+                        }
+                    }
+                }
+
+                candidates.setSize(n);
+
+                if (n == 1)
+                {
+                    return candidates[0];
+                }
+
+                FatalErrorInFunction
+                    << "Could not detect the liquid phase from alpha.<phase>."
+                    << Foam::nl
+                    << "Exactly one alpha.<phase> field/file must exist."
+                    << Foam::nl
+                    << "phases = " << phases << Foam::nl
+                    << "matching alpha fields/files = " << candidates
+                    << exit(FatalError);
+
+                return Foam::word::null;
+            }
+
+
+            static Foam::word gasPhaseName
+            (
+                const Foam::fvMesh& mesh,
+                const Foam::word& liquidPhase
+            )
+            {
+                Foam::IOdictionary phaseProperties
+                (
+                    Foam::IOobject
+                    (
+                        "phaseProperties",
+                        mesh.time().constant(),
+                        mesh,
+                        Foam::IOobject::MUST_READ,
+                        Foam::IOobject::NO_WRITE
+                    )
+                );
+
+                Foam::wordList phases;
+                phaseProperties.lookup("phases") >> phases;
+
+                forAll(phases, i)
+                {
+                    if (phases[i] != liquidPhase)
+                    {
+                        return phases[i];
+                    }
+                }
+
+                FatalErrorInFunction
+                    << "Could not detect gas phase from phaseProperties. "
+                    << "Liquid phase is " << liquidPhase
+                    << ", phases are " << phases
+                    << exit(FatalError);
+
+                return Foam::word::null;
+            }
+
+
+            static Foam::scalar fluxWeightedMean
+            (
+                const Foam::fvMesh& mesh,
+                const Foam::volScalarField& fld,
+                const Foam::surfaceScalarField& phi,
+                const Foam::wordList& patchNames,
+                const Foam::scalar fallback
+            )
+            {
+                Foam::scalar num = 0;
+                Foam::scalar den = 0;
+
+                forAll(patchNames, i)
+                {
+                    const Foam::label patchi = patchID(mesh, patchNames[i]);
+
+                    const Foam::fvsPatchField<Foam::scalar>& phip =
+                        phi.boundaryField()[patchi];
+
+                    const Foam::scalarField fp
+                    (
+                        fld.boundaryField()[patchi].patchInternalField()
+                    );
+
+                    forAll(phip, facei)
+                    {
+                        // Positive patch flux means outflow from the domain.
+                        const Foam::scalar w = max(phip[facei], Foam::scalar(0));
+
+                        num += w*fp[facei];
+                        den += w;
+                    }
+                }
+
+                Foam::reduce(num, Foam::sumOp<Foam::scalar>());
+                Foam::reduce(den, Foam::sumOp<Foam::scalar>());
+
+                if (den > Foam::VSMALL)
+                {
+                    return num/den;
+                }
+
+                return fallback;
+            }
+
+
+            static Foam::scalar fluxWeightedGeoMean
+            (
+                const Foam::fvMesh& mesh,
+                const Foam::volScalarField& fld,
+                const Foam::surfaceScalarField& phi,
+                const Foam::wordList& patchNames,
+                const Foam::scalar fallback
+            )
+            {
+                Foam::scalar sumLog = 0;
+                Foam::scalar den = 0;
+
+                forAll(patchNames, i)
+                {
+                    const Foam::label patchi = patchID(mesh, patchNames[i]);
+
+                    const Foam::fvsPatchField<Foam::scalar>& phip =
+                        phi.boundaryField()[patchi];
+
+                    const Foam::scalarField fp
+                    (
+                        fld.boundaryField()[patchi].patchInternalField()
+                    );
+
+                    forAll(phip, facei)
+                    {
+                        // Positive patch flux means outflow from the domain.
+                        const Foam::scalar w = max(phip[facei], Foam::scalar(0));
+
+                        sumLog += w*std::log(fp[facei]);
+                        den += w;
+                    }
+                }
+
+                Foam::reduce(sumLog, Foam::sumOp<Foam::scalar>());
+                Foam::reduce(den, Foam::sumOp<Foam::scalar>());
+
+                if (den > Foam::VSMALL)
+                {
+                    return std::exp(sumLog/den);
+                }
+
+                return fallback;
+            }
+
+
+            static Foam::scalar volumeGeoMean
+            (
+                const Foam::fvMesh& mesh,
+                const Foam::volScalarField& fld,
+                const Foam::scalar fallback
+            )
+            {
+                Foam::scalar sumLog = 0;
+                Foam::scalar sumV = 0;
+
+                const Foam::scalarField& V = mesh.V();
+                const Foam::scalarField& f = fld.internalField();
+
+                forAll(f, celli)
+                {
+                    sumLog += V[celli]*std::log(f[celli]);
+                    sumV += V[celli];
+                }
+
+                Foam::reduce(sumLog, Foam::sumOp<Foam::scalar>());
+                Foam::reduce(sumV, Foam::sumOp<Foam::scalar>());
+
+                if (sumV > Foam::VSMALL)
+                {
+                    return std::exp(sumLog/sumV);
+                }
+
+                return fallback;
+            }
+
+
+            static Foam::scalar reservoirLiquidFromVapour
+            (
+                const Foam::scalar y,
+                const Foam::scalar A12
+            )
+            {
+                // Inverse of:
+                //     y = A12*x/(1 + (A12 - 1)*x)
+                //
+                // Result:
+                //     x = y/(A12 - (A12 - 1)*y)
+
+                return y/(A12 - (A12 - 1)*y);
+            }
+
+
+            static Foam::scalar fenskeNmin
+            (
+                const Foam::scalar xD,
+                const Foam::scalar xB,
+                const Foam::scalar A12
+            )
+            {
+                return
+                    std::log((xD/(1 - xD))*((1 - xB)/xB))
+                /std::log(A12);
+            }
+        #};
+
+        codeRead
+        #{
+            speciesField_ =
+                dict.lookupOrDefault<Foam::word>
+                (
+                    "speciesField",
+                    "cyclohexane.X"
+                );
+
+            dict.lookup("topPatches") >> topPatches_;
+            dict.lookup("bottomPatches") >> bottomPatches_;
+        #};
+
+        codeExecute
+        #{
+            const Foam::fvMesh& m = mesh();
+
+            if (!m.foundObject<Foam::volScalarField>(speciesField_))
+            {
+                Foam::Info
+                    << "fenskePatchData: field " << speciesField_
+                    << " not found yet, skipping." << Foam::nl;
+
+                return true;
+            }
+
+            if (!m.foundObject<Foam::volScalarField>("A12"))
+            {
+                Foam::Info
+                    << "fenskePatchData: field A12 not found yet, skipping."
+                    << Foam::nl;
+
+                return true;
+            }
+
+            const Foam::word liquidPhase = liquidPhaseName(m);
+            const Foam::word gasPhase = gasPhaseName(m, liquidPhase);
+
+            const Foam::word alphaPhiLiquidName =
+                Foam::IOobject::groupName("alphaPhi", liquidPhase);
+
+            const Foam::word alphaPhiGasName =
+                Foam::IOobject::groupName("alphaPhi", gasPhase);
+
+            if
+            (
+                !m.foundObject<Foam::surfaceScalarField>(alphaPhiLiquidName)
+            || !m.foundObject<Foam::surfaceScalarField>(alphaPhiGasName)
+            )
+            {
+                FatalErrorInFunction
+                    << "Could not find " << alphaPhiLiquidName
+                    << " or " << alphaPhiGasName << Foam::nl
+                    << "Detected liquid phase = " << liquidPhase << Foam::nl
+                    << "Detected gas phase    = " << gasPhase
+                    << exit(FatalError);
+            }
+
+            const Foam::volScalarField& X =
+                m.lookupObject<Foam::volScalarField>(speciesField_);
+
+            const Foam::volScalarField& A12 =
+                m.lookupObject<Foam::volScalarField>("A12");
+
+            const Foam::surfaceScalarField& alphaPhiLiquid =
+                m.lookupObject<Foam::surfaceScalarField>(alphaPhiLiquidName);
+
+            const Foam::surfaceScalarField& alphaPhiGas =
+                m.lookupObject<Foam::surfaceScalarField>(alphaPhiGasName);
+
+            // Condenser side:
+            // outgoing gas at the top -> head/distillate composition.
+            const Foam::scalar xD_headFromTopGas =
+                fluxWeightedMean
+                (
+                    m,
+                    X,
+                    alphaPhiGas,
+                    topPatches_,
+                    Foam::scalar(0)
+                );
+
+            // Boiler side, Variant A:
+            // outgoing liquid at the bottom is used by the boiler BC
+            // as incoming gas composition.
+            const Foam::scalar xBottomOutgoingLiquid =
+                fluxWeightedMean
+                (
+                    m,
+                    X,
+                    alphaPhiLiquid,
+                    bottomPatches_,
+                    Foam::scalar(0)
+                );
+
+            const Foam::scalar yB_gasFromMassBalance =
+                xBottomOutgoingLiquid;
+
+            // A12 measured at bottom liquid outlet.
+            const Foam::scalar A12_bottomArithmetic =
+                fluxWeightedMean
+                (
+                    m,
+                    A12,
+                    alphaPhiLiquid,
+                    bottomPatches_,
+                    Foam::scalar(1)
+                );
+
+            // Equivalent reboiler-reservoir liquid composition from inverse VLE.
+            // This value is not imposed by the BC. It is only inferred for Fenske.
+            const Foam::scalar xB_reservoirFromInverseVLE =
+                reservoirLiquidFromVapour
+                (
+                    yB_gasFromMassBalance,
+                    A12_bottomArithmetic
+                );
+
+            // Geometric A12 values.
+            const Foam::scalar A12_topGeo =
+                fluxWeightedGeoMean
+                (
+                    m,
+                    A12,
+                    alphaPhiGas,
+                    topPatches_,
+                    Foam::scalar(1)
+                );
+
+            const Foam::scalar A12_bottomGeo =
+                fluxWeightedGeoMean
+                (
+                    m,
+                    A12,
+                    alphaPhiLiquid,
+                    bottomPatches_,
+                    Foam::scalar(1)
+                );
+
+            const Foam::scalar A12_columnGeo =
+                volumeGeoMean
+                (
+                    m,
+                    A12,
+                    Foam::scalar(1)
+                );
+
+            // Fenske estimates.
+            const Foam::scalar Nmin_columnGeo =
+                fenskeNmin
+                (
+                    xD_headFromTopGas,
+                    xB_reservoirFromInverseVLE,
+                    A12_columnGeo
+                );
+
+            const Foam::scalar Nmin_bottomArithmetic =
+                fenskeNmin
+                (
+                    xD_headFromTopGas,
+                    xB_reservoirFromInverseVLE,
+                    A12_bottomArithmetic
+                );
+
+            const Foam::fileName dir =
+                m.time().path()/"postProcessing"/"fenskePatchData"/"0";
+
+            Foam::mkDir(dir);
+
+            const Foam::fileName file = dir/"values.dat";
+            const bool newFile = !Foam::isFile(file);
+
+            std::ofstream os(file.c_str(), std::ios_base::app);
+
+            if (newFile)
+            {
+                os  << "# Time"
+                    << " X_D_head_fromTopGas"
+                    << " x_bottomOutgoingLiquid"
+                    << " y_B_gasFromMassBalance"
+                    << " x_B_reservoirFromInverseVLE"
+                    << " A12_bottomArithmetic"
+                    << " A12_topGeo"
+                    << " A12_bottomGeo"
+                    << " A12_columnGeo"
+                    << " Nmin_columnGeo"
+                    << " Nmin_bottomArithmetic"
+                    << std::endl;
+            }
+
+            os  << m.time().value() << " "
+                << xD_headFromTopGas << " "
+                << xBottomOutgoingLiquid << " "
+                << yB_gasFromMassBalance << " "
+                << xB_reservoirFromInverseVLE << " "
+                << A12_bottomArithmetic << " "
+                << A12_topGeo << " "
+                << A12_bottomGeo << " "
+                << A12_columnGeo << " "
+                << Nmin_columnGeo << " "
+                << Nmin_bottomArithmetic
+                << std::endl;
+
+            Foam::Info
+                << "Fenske data: "
+                << "X_D=" << xD_headFromTopGas
+                << ", x_bottom_liquid=" << xBottomOutgoingLiquid
+                << ", y_B=" << yB_gasFromMassBalance
+                << ", x_B,res=" << xB_reservoirFromInverseVLE
+                << ", A12_bottom=" << A12_bottomArithmetic
+                << ", A12_geo_column=" << A12_columnGeo
+                << ", Nmin_columnGeo=" << Nmin_columnGeo
+                << Foam::nl;
+
+            return true;
+        #};
+    }

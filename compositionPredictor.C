@@ -224,10 +224,45 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     volScalarField K2eq("K2eq", vle2Ptr->K(pVLE, T));
 
     // relative volatility A_ij = K1eq/K2eq
-    volScalarField A12("A12", K1eq/K2eq);
+      tmp<volScalarField> tA12(K1eq/K2eq);
 
-    Info<<"Relative volatility min / max = "<< min(A12).value()
-        << " / " << max(A12).value() << endl;
+      if (mesh.foundObject<volScalarField>("A12"))
+      {
+          volScalarField& A12 =
+              const_cast<volScalarField&>
+              (
+                  mesh.lookupObject<volScalarField>("A12")
+              );
+
+          A12 = tA12();
+          A12.correctBoundaryConditions();
+      }
+      else
+      {
+          mesh.objectRegistry::store
+          (
+              new volScalarField
+              (
+                  IOobject
+                  (
+                      "A12",
+                      runTime.name(),
+                      mesh,
+                      IOobject::NO_READ,
+                      IOobject::AUTO_WRITE
+                  ),
+                  tA12()
+              )
+          );
+      }
+
+      volScalarField& A12 = const_cast<volScalarField&>
+      (
+        mesh.lookupObject<volScalarField>("A12")
+      );
+      
+      Info<<"Relative volatility min / max = "<< min(A12).value()
+          << " / " << max(A12).value() << endl;
     volScalarField X1L_lag("X1L_lag", pos(ALPHA1)*C1L/max(CL, dimensionedScalar("SMALL", CL.dimensions(), SMALL))); // lagged value of the mole fraction of species 1 in the liquid phase, used for the first guess of Kgcst
     //volScalarField X1G_lag("X1G_lag", pos(ALPHA2)*C1G/max(CG, dimensionedScalar("SMALL", CG.dimensions(), SMALL))); // lagged value of the mole fraction of species 1 in the gas phase, used for the first guess of Kgcst
 

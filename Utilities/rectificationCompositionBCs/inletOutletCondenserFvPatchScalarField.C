@@ -77,59 +77,55 @@ word inletOutletCondenserFvPatchScalarField::liquidPhaseName() const
     wordList candidates(phases.size());
     label n = 0;
 
-    // Primary criterion: the alpha.<phase> volScalarField registered by the
-    // solver. In incompressibleVoFTC there is only one such field, and it is
-    // the liquid phase fraction.
+    // IMPORTANT:
+    // Do not use mesh.foundObject<volScalarField>("alpha.<phase>") here.
+    // During run-time OpenFOAM/incompressibleVoF may register both alpha fields
+    // although only one alpha.<phase> file exists in the case. The intended
+    // incompressibleVoFTC convention is:
+    //
+    //     the single alpha.<phase> file in the start-time folder is liquid.
+    //
+    // Therefore detect the liquid phase from disk, not from the objectRegistry.
     forAll(phases, i)
     {
         const word aName = alphaFieldName(phases[i]);
 
-        if (mesh.foundObject<volScalarField>(aName))
+        IOobject aHeader
+        (
+            aName,
+            mesh.time().startTime().name(),
+            mesh,
+            IOobject::READ_IF_PRESENT,
+            IOobject::NO_WRITE,
+            false
+        );
+
+        if (aHeader.headerOk())
         {
             candidates[n++] = phases[i];
         }
     }
 
-    // Fallback for early construction/restart edge cases: check whether an
-    // alpha.<phase> file exists in the current time directory.
-    if (n == 0)
-    {
-        forAll(phases, i)
-        {
-            IOobject aHeader
-            (
-                alphaFieldName(phases[i]),
-                mesh.time().name(),
-                mesh,
-                IOobject::READ_IF_PRESENT,
-                IOobject::NO_WRITE
-            );
-
-            if (aHeader.headerOk())
-            {
-                candidates[n++] = phases[i];
-            }
-        }
-    }
+    candidates.setSize(n);
 
     if (n == 1)
     {
         return candidates[0];
     }
 
-    candidates.setSize(n);
-
     FatalErrorInFunction
-        << "Could not determine the liquid phase from the alpha.<phase> field." << nl
-        << "The phase order in constant/phaseProperties is not used to choose "
-        << "the liquid phase." << nl
-        << "Exactly one alpha.<phase> field must exist and it is treated as "
-        << "the liquid phase." << nl
+        << "Could not determine the liquid phase from the start-time "
+        << "alpha.<phase> file." << nl
+        << "Exactly one alpha.<phase> file must exist in "
+        << mesh.time().startTime().name() << "." << nl
+        << "The objectRegistry is intentionally not used because both phase "
+        << "alpha fields may be registered during run-time." << nl
         << "phases = " << phases << nl
-        << "matching alpha fields = " << candidates << nl
+        << "matching alpha files = " << candidates
         << exit(FatalError);
 
     return word();
+
 }
 
 
