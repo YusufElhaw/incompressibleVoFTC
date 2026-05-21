@@ -134,6 +134,11 @@ void Foam::solvers::incompressibleVoFTC::pressureCorrector()
         p_rgh_ = p - rho*buoyancy.gh;
     }
 
+    if (pimple.finalIter())
+    {
+        compositionPredictor();
+    }
+    
     clearrAU();
     tUEqn.clear();
 }

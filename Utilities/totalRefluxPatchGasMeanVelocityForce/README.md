@@ -52,54 +52,43 @@ totalRefluxGasDrive
 {
     type            totalRefluxPatchGasMeanVelocityForce;
 
-    cellZone        all; // Zellen, in denen die Momentumquelle für  Gas wirken darf
-    // Patches, auf denen Flüssigkeits- und Gasbelastung gemessen werden
-    patch           bottom;
-    // patches      (bottom_01 bottom_02 bottom_03);
+    cellZone        all;
+    patch           bottom_Top_on_bottom;
 
     U               U;
 
-    // Auto-detect: alpha.liquid, alpha.water, alpha1, sonst erstes nicht-gas alpha.*
-    // alpha        alpha.liquid;
-
-    // Default und empfohlen für NCC/coupled Patches:
-    // Robuste Flüssigkeitsmessung über alpha * U in Richtung gasDirection
-    
     liquidFluxMode  directionalAlphaU;
-    // liquidFluxMode alphaPhi; // falls die Bereechnung über alphaPhi und Partch ist
-
-    // Optionaler Altmodus: exakte surfaceFieldValue-Logik mit alphaPhi.<phase>
-    // liquidFluxMode alphaPhi;
-    // alphaPhi       alphaPhi.liquid;
-    // counterCurrent false;
-
+    counterCurrent  true;
     gasDirection    (0 1 0);
 
-    // Low-pass Zeitkonstante der Flüssigkeitsbelastung [s]
-    // Zeitliche Glättung der Flüssigkeitsbelastung
-    averagingInterval 0.01;
+    averagingInterval 0;
 
-    // überschreiben der Dichten:  (optional)
-    // rhoLiquid       1000;
-    // rhoGas          1;
+    relaxation      0.01;
 
-    // Regelung
-    relaxation      0.02; //Stärke der Regelkorrektur
-    maxGasLoading   20; //Sicherheitslimit für die Soll-Gasbelastung
-    maxPressureGradient       1e7; //Absolutes Limit für den Druckgradienten
-    maxDeltaPressureGradient  1e5; //Limit für die Änderung pro Korrekturschritt
-    resetGradient   true; // Ignoriert gespeicherten alten Gradient bei Restart
+    balanceControl           true;
+    balanceWindow            0.01;
+    balanceTolerance         1e-8;    // kg/s
+    balanceRelativeTolerance 1e-4;
+    balanceIntegralGain      0.25;
+    maxBalanceCorrection     5;
 
-    // Source nur in ausreichend gasreichen Zellen
-    useCutoff       true;   // Aktiviert Quellen-Cutoff in gasarmen Zellen
-    alphaCutoff     0.2;    // Unterhalb dieses Gasanteils keine Quelle
-    alphaRamp       0.1;    // Glättungsbreite oberhalb von alphaCutoff
+    maxGasLoading   20;
+    maxPressureGradient       2e5;
+    maxDeltaPressureGradient  5e4;
+
+    resetGradient   true;
+
+    useCutoff       true;
+    alphaCutoff     0.2;
+    alphaRamp       0.1;
 }
+
+Start conservatively and increase gain only after checking ND/NB and the rawPatchMolarFlux balance.
 ```
 
 ## Hinweise
 
-- Für deinen NCC-Fall zuerst `liquidFluxMode directionalAlphaU` verwenden.
+- Für NCC-Fall zuerst `liquidFluxMode directionalAlphaU` verwenden.
 - `alphaPhi` nur verwenden, wenn der Postprocessing-Wert und der Solver-interne Wert waehrend der Loesung stabil sind.
 - `resetGradient true` ist nach instabilen Tests wichtig, weil alte `uniform/<name>Properties` sonst einen riesigen Gradienten wieder einlesen koennen.
 - Patches mit unterschiedlicher Orientierung koennen jetzt zusammen gemittelt werden, solange `gasDirection` für alle gleich sinnvoll ist.

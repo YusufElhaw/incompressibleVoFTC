@@ -32,21 +32,21 @@
 
 top1
 {
-    type        inletOutletCondensator;
+    type        inletOutletCondenser;
     group       topCondensator;
     value       uniform 0;
 }
 
 top2
 {
-    type        inletOutletCondensator;
+    type        inletOutletCondenser;
     group       topCondensator;
     value       uniform 0;
 }
 
 top3
 {
-    type        inletOutletCondensator;
+    type        inletOutletCondenser;
     group       topCondensator;
     value       uniform 0;
 }
@@ -96,7 +96,7 @@ bottom3
 //
 // top1
 // {
-//     type        inletOutletCondensator;
+//     type        inletOutletCondenser;
 //     patches     (top1 top2 top3);
 //     value       uniform 0;
 // }

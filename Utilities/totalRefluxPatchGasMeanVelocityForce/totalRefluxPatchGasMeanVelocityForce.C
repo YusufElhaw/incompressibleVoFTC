@@ -134,9 +134,24 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::readCoeffs
 
     rhoName_ = dict.lookupOrDefault<word>("rho", "rho");
     rhoLiquidFieldName_ =
-        dict.lookupOrDefault<word>("rhoLiquidField", word::null);
+        dict.lookupOrDefault<word>("rhoLiquidField", "rho.liquid");
     rhoGasFieldName_ =
-        dict.lookupOrDefault<word>("rhoGasField", word::null);
+        dict.lookupOrDefault<word>("rhoGasField", "rho.gas");
+
+    molarTotalReflux_ =
+        dict.lookupOrDefault<Switch>("molarTotalReflux", true);
+
+    species1LiquidName_ =
+        dict.lookupOrDefault<word>("species1Liquid", "cyclohexane.liquid");
+    species2LiquidName_ =
+        dict.lookupOrDefault<word>("species2Liquid", "nHeptane.liquid");
+    species1GasName_ =
+        dict.lookupOrDefault<word>("species1Gas", "cyclohexane.gas");
+    species2GasName_ =
+        dict.lookupOrDefault<word>("species2Gas", "nHeptane.gas");
+
+    W1_ = dict.lookupOrDefault<scalar>("W1", 84.16)/1000.0;
+    W2_ = dict.lookupOrDefault<scalar>("W2", 100.2)/1000.0;
 
     // Optional constants. If they are not given, rho.<phase> fields are tried;
     // if they are not available, the mixture field rho is used to estimate the
@@ -188,6 +203,35 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::readCoeffs
         dict.lookupOrDefault<scalar>("maxDeltaPressureGradient", -1);
 
     resetGradient_ = dict.lookupOrDefault<Switch>("resetGradient", false);
+
+    // Window-integral balance controller.  The base target is still computed
+    // from the instantaneous/filtered reflux, but this controller integrates
+    // the mismatch
+    //
+    //     eDot = mDown - mGasUp
+    //
+    // over balanceWindow and adds a superficial gas-loading correction to
+    // recover the accumulated mass error over the following windows.
+    balanceControl_ =
+        dict.lookupOrDefault<Switch>("balanceControl", true);
+
+    balanceWindow_ =
+        dict.lookupOrDefault<scalar>("balanceWindow", 0.01);
+
+    balanceTolerance_ =
+        dict.lookupOrDefault<scalar>("balanceTolerance", 1e-8);
+
+    balanceRelativeTolerance_ =
+        dict.lookupOrDefault<scalar>("balanceRelativeTolerance", 1e-4);
+
+    balanceIntegralGain_ =
+        dict.lookupOrDefault<scalar>("balanceIntegralGain", 0.25);
+
+    maxBalanceCorrection_ =
+        dict.lookupOrDefault<scalar>("maxBalanceCorrection", -1);
+
+    maxBalanceCorrectionFraction_ =
+        dict.lookupOrDefault<scalar>("maxBalanceCorrectionFraction", -1);
 }
 
 
@@ -333,14 +377,42 @@ Foam::word Foam::fv::totalRefluxPatchGasMeanVelocityForce::actualGasPhaseName
 }
 
 
+Foam::word Foam::fv::totalRefluxPatchGasMeanVelocityForce::actualGasAlphaPhiName
+(
+    const volScalarField& alpha1
+) const
+{
+    const word gasPhase(actualGasPhaseName(alpha1));
+
+    if (gasPhase != word::null)
+    {
+        const word phaseAlphaPhiName
+        (
+            IOobject::groupName("alphaPhi", gasPhase)
+        );
+
+        if (mesh().foundObject<surfaceScalarField>(phaseAlphaPhiName))
+        {
+            return phaseAlphaPhiName;
+        }
+    }
+
+    if (mesh().foundObject<surfaceScalarField>("alphaPhi2"))
+    {
+        return "alphaPhi2";
+    }
+
+    return word::null;
+}
+
+
 Foam::scalar Foam::fv::totalRefluxPatchGasMeanVelocityForce::gasFluxWeight
 (
     const scalar alpha1
 ) const
 {
-    // This is used for measuring the superficial gas velocity.  It must not
-    // include the alphaCutoff_, because low-gas-fraction faces still belong to
-    // the physical flux measurement.
+    // This is only for measuring superficial gas velocity.
+    // Do not apply alphaCutoff_ here.
     return scalar(1) - limitedAlpha(alpha1);
 }
 
@@ -416,56 +488,90 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::writeProps
         propsDict.add("liquidFlowRate", liquidFlowRate_);
         propsDict.add("patchArea", patchArea_);
         propsDict.add("liquidLoading", liquidLoading_);
-        propsDict.add("accumulatedLiquidVolume", accumulatedLiquidVolume_);
+        propsDict.add("accumulatedEquivalentGasVolume", accumulatedEquivalentGasVolume_);
         propsDict.add("accumulatedTime", accumulatedTime_);
         propsDict.add("rhoLiquid", rhoLiquidPatchMean_);
         propsDict.add("rhoGas", rhoGasPatchMean_);
         propsDict.add("densitySource", densitySource_);
+        propsDict.add("totalMassFlowRateDown", totalMassFlowRateDown_);
+        propsDict.add("liquidVolumeFlowRateDown", liquidVolumeFlowRateDown_);
+        propsDict.add("gasVolumeFlowRateDown", gasVolumeFlowRateDown_);
+        propsDict.add("instantGasLoadingTarget", instantGasLoadingTarget_);
+        propsDict.add("gasLoadingTarget", gasLoadingTarget_);
+        propsDict.add("gasMassFlowRateUp", gasMassFlowRateUp_);
+        propsDict.add("gasVolumeFlowRateUp", gasVolumeFlowRateUp_);
+        propsDict.add("totalMolarFlowRateDown", totalMolarFlowRateDown_);
+        propsDict.add("gasMolarFlowRateUp", gasMolarFlowRateUp_);
+        propsDict.add("gasMolarConcentrationPatchMean", gasMolarConcentrationPatchMean_);
+        propsDict.add("molarTotalReflux", molarTotalReflux_);
+        propsDict.add("balanceErrorRate", balanceErrorRate_);
+        propsDict.add("balanceWindowErrorMass", balanceWindowErrorMass_);
+        propsDict.add("balanceWindowTime", balanceWindowTime_);
+        propsDict.add("balanceCorrectionLoading", balanceCorrectionLoading_);
+
         propsDict.regIOobject::write();
     }
 }
 
 
-void Foam::fv::totalRefluxPatchGasMeanVelocityForce::measureLiquidFlowRate
+void Foam::fv::totalRefluxPatchGasMeanVelocityForce::measureDownwardTotalReflux
 (
     const volVectorField& U,
     const volScalarField& alpha1,
-    scalar& liquidFlowRate,
+    scalar& totalMassFlowDown,
+    scalar& liquidVolumeFlowDown,
+    scalar& gasVolumeFlowDown,
+    scalar& gasVolumeFlowUp,
     scalar& patchArea
 ) const
 {
-    const word alphaPhiFieldName(actualAlphaPhiName(alpha1));
+    const word alphaPhiLName(actualAlphaPhiName(alpha1));
+    const word alphaPhiGName(actualGasAlphaPhiName(alpha1));
 
-    const surfaceScalarField* alphaPhi1Ptr = nullptr;
+    const surfaceScalarField* alphaPhiLPtr = nullptr;
+    const surfaceScalarField* alphaPhiGPtr = nullptr;
     const surfaceScalarField* phiPtr = nullptr;
 
     if (liquidFluxMode_ == "alphaPhi")
     {
-        if (alphaPhiFieldName != word::null)
+        if (alphaPhiLName != word::null)
         {
-            alphaPhi1Ptr =
-                &mesh().lookupObject<surfaceScalarField>(alphaPhiFieldName);
+            alphaPhiLPtr =
+                &mesh().lookupObject<surfaceScalarField>(alphaPhiLName);
         }
-        else
-        {
-            if (!mesh().foundObject<surfaceScalarField>(phiName_))
-            {
-                FatalErrorInFunction
-                    << "Cannot find liquid phase flux field alphaPhi for "
-                    << alpha1.name() << " and cannot find fallback flux field "
-                    << phiName_ << nl
-                    << "Set 'alphaPhi' explicitly or switch to "
-                    << "liquidFluxMode directionalAlphaU."
-                    << nl << "Available surfaceScalarField objects are "
-                    << mesh().toc<surfaceScalarField>()
-                    << exit(FatalError);
-            }
 
+        if (alphaPhiGName != word::null)
+        {
+            alphaPhiGPtr =
+                &mesh().lookupObject<surfaceScalarField>(alphaPhiGName);
+        }
+
+        if
+        (
+            (!alphaPhiLPtr || !alphaPhiGPtr)
+         && mesh().foundObject<surfaceScalarField>(phiName_)
+        )
+        {
             phiPtr = &mesh().lookupObject<surfaceScalarField>(phiName_);
+        }
+
+        if (!alphaPhiLPtr && !phiPtr)
+        {
+            FatalErrorInFunction
+                << "Cannot find liquid alphaPhi field for " << alpha1.name()
+                << " and cannot find fallback phi field " << phiName_ << nl
+                << "Use liquidFluxMode directionalAlphaU for NCC patches, "
+                << "or provide alphaPhi/phi explicitly." << nl
+                << "Available surfaceScalarField objects are "
+                << mesh().toc<surfaceScalarField>()
+                << exit(FatalError);
         }
     }
 
-    scalar sumQL = 0;
+    scalar sumMDown = 0;
+    scalar sumQLDown = 0;
+    scalar sumQGDown = 0;
+    scalar sumQGUp = 0;
     scalar sumA = 0;
 
     forAll(patches_, patchNamei)
@@ -477,16 +583,23 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::measureLiquidFlowRate
         const fvPatchScalarField& alpha1p = alpha1.boundaryField()[patchi];
         const fvPatchVectorField& Up = U.boundaryField()[patchi];
 
-        const fvsPatchScalarField* alphaPhi1pPtr = nullptr;
+        const fvsPatchScalarField* alphaPhiLpPtr = nullptr;
+        const fvsPatchScalarField* alphaPhiGpPtr = nullptr;
         const fvsPatchScalarField* phipPtr = nullptr;
 
         if (liquidFluxMode_ == "alphaPhi")
         {
-            if (alphaPhi1Ptr)
+            if (alphaPhiLPtr)
             {
-                alphaPhi1pPtr = &alphaPhi1Ptr->boundaryField()[patchi];
+                alphaPhiLpPtr = &alphaPhiLPtr->boundaryField()[patchi];
             }
-            else
+
+            if (alphaPhiGPtr)
+            {
+                alphaPhiGpPtr = &alphaPhiGPtr->boundaryField()[patchi];
+            }
+
+            if (phiPtr)
             {
                 phipPtr = &phiPtr->boundaryField()[patchi];
             }
@@ -494,104 +607,508 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::measureLiquidFlowRate
 
         forAll(magSf, facei)
         {
+            const scalar A = magSf[facei];
+
+            const scalar aL = limitedAlpha(alpha1p[facei]);
+            const scalar aG = scalar(1) - aL;
+
             scalar phiL = 0;
+            scalar phiG = 0;
 
             if (liquidFluxMode_ == "alphaPhi")
             {
-                if (alphaPhi1pPtr)
+                if (alphaPhiLpPtr)
                 {
-                    phiL = (*alphaPhi1pPtr)[facei];
+                    phiL = (*alphaPhiLpPtr)[facei];
                 }
                 else
                 {
-                    phiL = limitedAlpha(alpha1p[facei])*(*phipPtr)[facei];
+                    phiL = aL*(*phipPtr)[facei];
+                }
+
+                if (alphaPhiGpPtr)
+                {
+                    phiG = (*alphaPhiGpPtr)[facei];
+                }
+                else if (phipPtr)
+                {
+                    phiG = (*phipPtr)[facei] - phiL;
+                }
+                else
+                {
+                    phiG = 0;
                 }
             }
             else
             {
-                // Robust default: physical directional liquid flow through the
-                // selected cross-section.  This avoids NCC/coupled-patch
-                // alphaPhi spikes and is independent of patch-normal direction.
-                phiL = limitedAlpha(alpha1p[facei])
-                    *(Up[facei] & gasDirection_)*magSf[facei];
+                // Use the same patch-normal volume flux as the apparatus BCs:
+                // positive U&Sf leaves the CFD domain into the apparatus.
+                const scalar phi = Up[facei] & mesh().Sf().boundaryField()[patchi][facei];
+
+                phiL = aL*phi;
+                phiG = aG*phi;
             }
 
-            sumQL += phiL;
-            sumA += magSf[facei];
+            // Apparatus convention: positive = column -> apparatus.
+            // Gas return from apparatus to column is negative gas flux.
+            const scalar qLDown = max( phiL, scalar(0));
+            const scalar qGDown = max( phiG, scalar(0));
+            const scalar qGUp   = max(-phiG, scalar(0));
+
+            sumQLDown += qLDown;
+            sumQGDown += qGDown;
+            sumQGUp += qGUp;
+
+            sumMDown +=
+                rhoLiquidPatchMean_*qLDown
+              + rhoGasPatchMean_*qGDown;
+
+            sumA += A;
         }
     }
 
-    reduce(sumQL, sumOp<scalar>());
+    reduce(sumMDown, sumOp<scalar>());
+    reduce(sumQLDown, sumOp<scalar>());
+    reduce(sumQGDown, sumOp<scalar>());
+    reduce(sumQGUp, sumOp<scalar>());
     reduce(sumA, sumOp<scalar>());
 
-    liquidFlowRate = sumQL;
+    totalMassFlowDown = sumMDown;
+    liquidVolumeFlowDown = sumQLDown;
+    gasVolumeFlowDown = sumQGDown;
+    gasVolumeFlowUp = sumQGUp;
     patchArea = sumA;
 }
 
 
-void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateLiquidLoading
+
+bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::molarFluxFieldsAvailable() const
+{
+    return
+        mesh().foundObject<volScalarField>(rhoLiquidFieldName_)
+     && mesh().foundObject<volScalarField>(rhoGasFieldName_)
+     && mesh().foundObject<volScalarField>(species1LiquidName_)
+     && mesh().foundObject<volScalarField>(species2LiquidName_)
+     && mesh().foundObject<volScalarField>(species1GasName_)
+     && mesh().foundObject<volScalarField>(species2GasName_);
+}
+
+
+void Foam::fv::totalRefluxPatchGasMeanVelocityForce::measureDownwardTotalRefluxMolar
+(
+    const volVectorField& U,
+    const volScalarField& alpha1,
+    scalar& totalMolarFlowDown,
+    scalar& gasMolarFlowUp,
+    scalar& liquidVolumeFlowDown,
+    scalar& gasVolumeFlowDown,
+    scalar& gasVolumeFlowUp,
+    scalar& gasMolarConcentration,
+    scalar& patchArea
+) const
+{
+    if (!molarFluxFieldsAvailable())
+    {
+        FatalErrorInFunction
+            << "molarTotalReflux requires the following volScalarFields:" << nl
+            << "  rhoLiquidField=" << rhoLiquidFieldName_ << " found="
+            << mesh().foundObject<volScalarField>(rhoLiquidFieldName_) << nl
+            << "  rhoGasField=" << rhoGasFieldName_ << " found="
+            << mesh().foundObject<volScalarField>(rhoGasFieldName_) << nl
+            << "  species1Liquid=" << species1LiquidName_ << " found="
+            << mesh().foundObject<volScalarField>(species1LiquidName_) << nl
+            << "  species2Liquid=" << species2LiquidName_ << " found="
+            << mesh().foundObject<volScalarField>(species2LiquidName_) << nl
+            << "  species1Gas=" << species1GasName_ << " found="
+            << mesh().foundObject<volScalarField>(species1GasName_) << nl
+            << "  species2Gas=" << species2GasName_ << " found="
+            << mesh().foundObject<volScalarField>(species2GasName_) << nl
+            << exit(FatalError);
+    }
+
+    if (W1_ <= SMALL || W2_ <= SMALL)
+    {
+        FatalErrorInFunction
+            << "W1/W2 must be positive. W1=" << W1_ << ", W2=" << W2_
+            << exit(FatalError);
+    }
+
+    const volScalarField& rhoL = mesh().lookupObject<volScalarField>(rhoLiquidFieldName_);
+    const volScalarField& rhoG = mesh().lookupObject<volScalarField>(rhoGasFieldName_);
+    const volScalarField& Y1L = mesh().lookupObject<volScalarField>(species1LiquidName_);
+    const volScalarField& Y2L = mesh().lookupObject<volScalarField>(species2LiquidName_);
+    const volScalarField& Y1G = mesh().lookupObject<volScalarField>(species1GasName_);
+    const volScalarField& Y2G = mesh().lookupObject<volScalarField>(species2GasName_);
+
+    scalar sumNDown = 0;
+    scalar sumNGasUp = 0;
+    scalar sumQLDown = 0;
+    scalar sumQGDown = 0;
+    scalar sumQGUp = 0;
+    scalar sumA = 0;
+    scalar sumCGAG = 0;
+    scalar sumAG = 0;
+
+    forAll(patches_, patchNamei)
+    {
+        const word& patchName = patches_[patchNamei];
+        const label patchi = mesh().boundaryMesh().findIndex(patchName);
+
+        const scalarField& magSf = mesh().boundary()[patchi].magSf();
+        const vectorField& Sfp = mesh().Sf().boundaryField()[patchi];
+        const fvPatchVectorField& Up = U.boundaryField()[patchi];
+        const fvPatchScalarField& alpha1p = alpha1.boundaryField()[patchi];
+        const fvPatchScalarField& rhoLp = rhoL.boundaryField()[patchi];
+        const fvPatchScalarField& rhoGp = rhoG.boundaryField()[patchi];
+        const fvPatchScalarField& Y1Lp = Y1L.boundaryField()[patchi];
+        const fvPatchScalarField& Y2Lp = Y2L.boundaryField()[patchi];
+        const fvPatchScalarField& Y1Gp = Y1G.boundaryField()[patchi];
+        const fvPatchScalarField& Y2Gp = Y2G.boundaryField()[patchi];
+
+        forAll(magSf, facei)
+        {
+            const scalar A = magSf[facei];
+            const scalar aL = limitedAlpha(alpha1p[facei]);
+            const scalar aG = scalar(1) - aL;
+            const scalar phi = Up[facei] & Sfp[facei];
+
+            const scalar CL = rhoLp[facei]*(Y1Lp[facei]/W1_ + Y2Lp[facei]/W2_);
+            const scalar CG = rhoGp[facei]*(Y1Gp[facei]/W1_ + Y2Gp[facei]/W2_);
+
+            const scalar qL = aL*phi;
+            const scalar qG = aG*phi;
+            const scalar nL = CL*qL;
+            const scalar nG = CG*qG;
+
+            sumNDown += max(nL, scalar(0)) + max(nG, scalar(0));
+            sumNGasUp += max(-nG, scalar(0));
+
+            sumQLDown += max(qL, scalar(0));
+            sumQGDown += max(qG, scalar(0));
+            sumQGUp += max(-qG, scalar(0));
+
+            sumCGAG += aG*CG*A;
+            sumAG += aG*A;
+            sumA += A;
+        }
+    }
+
+    reduce(sumNDown, sumOp<scalar>());
+    reduce(sumNGasUp, sumOp<scalar>());
+    reduce(sumQLDown, sumOp<scalar>());
+    reduce(sumQGDown, sumOp<scalar>());
+    reduce(sumQGUp, sumOp<scalar>());
+    reduce(sumCGAG, sumOp<scalar>());
+    reduce(sumAG, sumOp<scalar>());
+    reduce(sumA, sumOp<scalar>());
+
+    totalMolarFlowDown = sumNDown;
+    gasMolarFlowUp = sumNGasUp;
+    liquidVolumeFlowDown = sumQLDown;
+    gasVolumeFlowDown = sumQGDown;
+    gasVolumeFlowUp = sumQGUp;
+    gasMolarConcentration = sumAG > SMALL ? sumCGAG/sumAG : 0;
+    patchArea = sumA;
+}
+
+
+void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateBalanceController
 (
     const volVectorField& U,
     const volScalarField& alpha1
 ) const
 {
-    scalar QL = 0;
-    scalar A0 = 0;
-    measureLiquidFlowRate(U, alpha1, QL, A0);
+    if (!balanceControl_)
+    {
+        return;
+    }
 
-    liquidFlowRate_ = QL;
-    patchArea_ = A0;
+    scalar eDot = 0;
+    scalar reference = SMALL;
+    scalar A0 = 0;
+    scalar denom = SMALL;
+
+    if (molarTotalReflux_)
+    {
+        scalar nDown = 0;
+        scalar nGasUp = 0;
+        scalar qLDown = 0;
+        scalar qGDown = 0;
+        scalar qGUp = 0;
+        scalar CG = 0;
+
+        measureDownwardTotalRefluxMolar
+        (
+            U,
+            alpha1,
+            nDown,
+            nGasUp,
+            qLDown,
+            qGDown,
+            qGUp,
+            CG,
+            A0
+        );
+
+        totalMolarFlowRateDown_ = nDown;
+        gasMolarFlowRateUp_ = nGasUp;
+        gasMolarConcentrationPatchMean_ = CG;
+        gasVolumeFlowRateUp_ = qGUp;
+        gasMassFlowRateUp_ = rhoGasPatchMean_*qGUp;
+
+        eDot = nDown - nGasUp;
+        reference = max(max(nDown, nGasUp), SMALL);
+        denom = max(CG*A0, SMALL);
+    }
+    else
+    {
+        scalar mDown = 0;
+        scalar qLDown = 0;
+        scalar qGDown = 0;
+        scalar qGUp = 0;
+
+        measureDownwardTotalReflux
+        (
+            U,
+            alpha1,
+            mDown,
+            qLDown,
+            qGDown,
+            qGUp,
+            A0
+        );
+
+        const scalar mGasUp = rhoGasPatchMean_*qGUp;
+        gasVolumeFlowRateUp_ = qGUp;
+        gasMassFlowRateUp_ = mGasUp;
+
+        eDot = mDown - mGasUp;
+        reference = max(max(mDown, mGasUp), SMALL);
+        denom = max(rhoGasPatchMean_*A0, SMALL);
+    }
+
+    balanceErrorRate_ = eDot;
+
+    if (A0 <= SMALL || denom <= SMALL)
+    {
+        return;
+    }
+
+    const scalar dt = mesh().time().deltaTValue();
+    const label timeIndex = mesh().time().timeIndex();
+
+    if (dt <= SMALL || timeIndex == lastBalanceUpdateTimeIndex_)
+    {
+        return;
+    }
+
+    balanceWindowErrorMass_ += eDot*dt;
+    balanceWindowTime_ += dt;
+    lastBalanceUpdateTimeIndex_ = timeIndex;
+
+    const scalar window = max(balanceWindow_, dt);
+
+    if (balanceWindowTime_ < window)
+    {
+        return;
+    }
+
+    const scalar eDotAve = balanceWindowErrorMass_/max(balanceWindowTime_, SMALL);
+
+    const scalar tolerance = max
+    (
+        balanceTolerance_,
+        balanceRelativeTolerance_*reference
+    );
+
+    if (mag(eDotAve) > tolerance)
+    {
+        // eDot > 0 means more molar flow leaves the column than enters as gas.
+        // Increase gas loading so the following window returns the inventory.
+        const scalar dJ = balanceIntegralGain_*eDotAve/denom;
+
+        balanceCorrectionLoading_ += dJ;
+
+        // Relative cap: fraction of current gas loading target.
+        // Takes priority over absolute cap when target > 0.
+        if
+        (
+            maxBalanceCorrectionFraction_ > 0
+         && gasLoadingTarget_ > SMALL
+        )
+        {
+            const scalar relMax =
+                maxBalanceCorrectionFraction_ * gasLoadingTarget_;
+
+            balanceCorrectionLoading_ =
+                balanceCorrectionLoading_ < 0
+              ? max(-relMax, balanceCorrectionLoading_)
+              : min( relMax, balanceCorrectionLoading_);
+        }
+        else if
+        (
+            maxBalanceCorrection_ > 0
+         && mag(balanceCorrectionLoading_) > maxBalanceCorrection_
+        )
+        {
+            balanceCorrectionLoading_ =
+                balanceCorrectionLoading_ < 0
+              ? -maxBalanceCorrection_
+              :  maxBalanceCorrection_;
+        }
+    }
+
+    Info<< "Total-reflux window balance:"
+        << (molarTotalReflux_ ? " basis=molar" : " basis=mass")
+        << ", errorAve = " << eDotAve
+        << ", tolerance = " << tolerance
+        << ", window = " << balanceWindowTime_
+        << ", balanceCorrection jG = " << balanceCorrectionLoading_
+        << " (cap: "
+        << (
+               maxBalanceCorrectionFraction_ > 0 && gasLoadingTarget_ > SMALL
+             ? maxBalanceCorrectionFraction_*gasLoadingTarget_
+             : maxBalanceCorrection_
+           )
+        << " m/s)"
+        << endl;
+
+    balanceWindowErrorMass_ = 0;
+    balanceWindowTime_ = 0;
+}
+
+
+void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateTotalRefluxLoading
+(
+    const volVectorField& U,
+    const volScalarField& alpha1
+) const
+{
+    scalar qGTarget = 0;
+    scalar A0 = 0;
+
+    if (molarTotalReflux_)
+    {
+        scalar nDown = 0;
+        scalar nGasUp = 0;
+        scalar qLDown = 0;
+        scalar qGDown = 0;
+        scalar qGUp = 0;
+        scalar CG = 0;
+
+        measureDownwardTotalRefluxMolar
+        (
+            U,
+            alpha1,
+            nDown,
+            nGasUp,
+            qLDown,
+            qGDown,
+            qGUp,
+            CG,
+            A0
+        );
+
+        totalMolarFlowRateDown_ = nDown;
+        gasMolarFlowRateUp_ = nGasUp;
+        gasMolarConcentrationPatchMean_ = CG;
+        liquidVolumeFlowRateDown_ = qLDown;
+        gasVolumeFlowRateDown_ = qGDown;
+        gasVolumeFlowRateUp_ = qGUp;
+        gasMassFlowRateUp_ = rhoGasPatchMean_*qGUp;
+        balanceErrorRate_ = nDown - nGasUp;
+        liquidFlowRate_ = qLDown;
+        patchArea_ = A0;
+
+        if (CG <= SMALL)
+        {
+            FatalErrorInFunction
+                << "Gas total molar concentration is too small for molar total reflux."
+                << exit(FatalError);
+        }
+
+        // Molar total reflux:
+        //     NGasUp,target = NDown
+        //     QGasUp,target = NDown / CG
+        qGTarget = nDown/CG;
+    }
+    else
+    {
+        scalar mDown = 0;
+        scalar qLDown = 0;
+        scalar qGDown = 0;
+        scalar qGUp = 0;
+
+        measureDownwardTotalReflux(U, alpha1, mDown, qLDown, qGDown, qGUp, A0);
+
+        totalMassFlowRateDown_ = mDown;
+        liquidVolumeFlowRateDown_ = qLDown;
+        gasVolumeFlowRateDown_ = qGDown;
+        gasVolumeFlowRateUp_ = qGUp;
+        gasMassFlowRateUp_ = rhoGasPatchMean_*qGUp;
+        balanceErrorRate_ = mDown - gasMassFlowRateUp_;
+        liquidFlowRate_ = qLDown;
+        patchArea_ = A0;
+
+        if (rhoGasPatchMean_ <= SMALL)
+        {
+            FatalErrorInFunction
+                << "Gas density is too small for mass-based total reflux."
+                << exit(FatalError);
+        }
+
+        qGTarget = mDown/rhoGasPatchMean_;
+    }
 
     if (A0 <= SMALL)
     {
         WarningInFunction
             << "Selected patch area is too small for " << name()
-            << ". Setting liquid loading and total-reflux gas target to zero."
+            << ". Setting total-reflux target to zero."
             << endl;
 
-        instantLiquidLoading_ = 0;
+        instantGasLoadingTarget_ = 0;
+        gasLoadingTarget_ = 0;
         liquidLoading_ = 0;
         liquidLoadingInitialized_ = true;
         return;
     }
 
-    // directionalAlphaU gives QL signed along gasDirection.  Total reflux
-    // needs the liquid load opposing gasDirection, hence -QL/A0.
-    // alphaPhi mode keeps the old signed patch-normal definition unless
-    // counterCurrent is enabled explicitly.
-    scalar jLinst = QL/A0;
+    const scalar jGbase = max(scalar(0), qGTarget/A0);
+    const scalar jGinst = max(scalar(0), jGbase + balanceCorrectionLoading_);
 
-    if (counterCurrent_)
-    {
-        jLinst = max(scalar(0), -jLinst);
-    }
+    instantGasLoadingTarget_ = jGinst;
 
-    instantLiquidLoading_ = jLinst;
-
+    const scalar dt = mesh().time().deltaTValue();
     const label timeIndex = mesh().time().timeIndex();
 
     if (!liquidLoadingInitialized_ || averagingInterval_ <= SMALL)
     {
-        liquidLoading_ = jLinst;
+        gasLoadingTarget_ = jGinst;
+        liquidLoading_ = gasLoadingTarget_;
+
         liquidLoadingInitialized_ = true;
         lastIntegratedTimeIndex_ = timeIndex;
-        accumulatedLiquidVolume_ = 0;
+        accumulatedEquivalentGasVolume_ = 0;
         accumulatedTime_ = 0;
+
         return;
     }
 
     if (timeIndex != lastIntegratedTimeIndex_)
     {
-        const scalar dt = mesh().time().deltaTValue();
-
         if (dt > SMALL)
         {
-            // Exponential physical-time filter.  It is smoother than the old
-            // rectangular reset window and avoids step changes every interval.
-            const scalar beta = min(scalar(1), dt/max(averagingInterval_, SMALL));
-            liquidLoading_ = (scalar(1) - beta)*liquidLoading_ + beta*jLinst;
+            const scalar beta =
+                min(scalar(1), dt/max(averagingInterval_, SMALL));
 
-            accumulatedLiquidVolume_ += QL*dt;
+            gasLoadingTarget_ =
+                (scalar(1) - beta)*gasLoadingTarget_
+              + beta*jGinst;
+
+            liquidLoading_ = gasLoadingTarget_;
+
+            accumulatedEquivalentGasVolume_ += qGTarget*dt;
             accumulatedTime_ += dt;
         }
 
@@ -649,8 +1166,11 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateDensities
      && mesh().foundObject<volScalarField>(rhoGName)
     )
     {
-        const volScalarField& rhoL = mesh().lookupObject<volScalarField>(rhoLName);
-        const volScalarField& rhoG = mesh().lookupObject<volScalarField>(rhoGName);
+        const volScalarField& rhoL =
+            mesh().lookupObject<volScalarField>(rhoLName);
+
+        const volScalarField& rhoG =
+            mesh().lookupObject<volScalarField>(rhoGName);
 
         scalar sumA = 0;
         scalar sumRhoLA = 0;
@@ -668,6 +1188,7 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateDensities
             forAll(magSf, facei)
             {
                 const scalar A = magSf[facei];
+
                 sumA += A;
                 sumRhoLA += rhoLp[facei]*A;
                 sumRhoGA += rhoGp[facei]*A;
@@ -788,20 +1309,11 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateTarget
     const volScalarField& alpha1
 ) const
 {
-    updateLiquidLoading(U, alpha1);
     updateDensities(alpha1);
 
-    if (rhoGasPatchMean_ <= SMALL)
-    {
-        FatalErrorInFunction
-            << "Gas density is too small for " << name()
-            << ". Add rhoGas or check the mixture rho field."
-            << exit(FatalError);
-    }
+    updateTotalRefluxLoading(U, alpha1);
 
-    const scalar uSoll = (rhoLiquidPatchMean_/rhoGasPatchMean_)*liquidLoading_;
-
-    targetUbar_ = gasDirection_*uSoll;
+    targetUbar_ = gasDirection_*gasLoadingTarget_;
 
     const scalar targetMag = mag(targetUbar_);
 
@@ -825,7 +1337,7 @@ Foam::scalar Foam::fv::totalRefluxPatchGasMeanVelocityForce::patchGasUbarAve
 ) const
 {
     scalar sumA = 0;
-    scalar sumAjG = 0;
+    scalar sumQGUp = 0;
 
     forAll(patches_, patchNamei)
     {
@@ -833,21 +1345,24 @@ Foam::scalar Foam::fv::totalRefluxPatchGasMeanVelocityForce::patchGasUbarAve
         const label patchi = mesh().boundaryMesh().findIndex(patchName);
 
         const scalarField& magSf = mesh().boundary()[patchi].magSf();
+        const vectorField& Sfp = mesh().Sf().boundaryField()[patchi];
         const fvPatchVectorField& Up = U.boundaryField()[patchi];
         const fvPatchScalarField& alpha1p = alpha1.boundaryField()[patchi];
 
         forAll(magSf, facei)
         {
             const scalar A = magSf[facei];
-            const scalar w = gasFluxWeight(alpha1p[facei]);
+            const scalar aG = scalar(1) - limitedAlpha(alpha1p[facei]);
+            const scalar phi = Up[facei] & Sfp[facei];
+            const scalar qG = aG*phi;
 
             sumA += A;
-            sumAjG += w*(gasDirection_ & Up[facei])*A;
+            sumQGUp += max(-qG, scalar(0));
         }
     }
 
     reduce(sumA, sumOp<scalar>());
-    reduce(sumAjG, sumOp<scalar>());
+    reduce(sumQGUp, sumOp<scalar>());
 
     if (sumA <= SMALL)
     {
@@ -858,7 +1373,7 @@ Foam::scalar Foam::fv::totalRefluxPatchGasMeanVelocityForce::patchGasUbarAve
         return 0;
     }
 
-    return sumAjG/sumA;
+    return sumQGUp/sumA;
 }
 
 
@@ -954,8 +1469,15 @@ totalRefluxPatchGasMeanVelocityForce
     liquidFluxMode_("directionalAlphaU"),
     phiName_("phi"),
     rhoName_("rho"),
-    rhoLiquidFieldName_(word::null),
-    rhoGasFieldName_(word::null),
+    rhoLiquidFieldName_("rho.liquid"),
+    rhoGasFieldName_("rho.gas"),
+    molarTotalReflux_(true),
+    species1LiquidName_("cyclohexane.liquid"),
+    species2LiquidName_("nHeptane.liquid"),
+    species1GasName_("cyclohexane.gas"),
+    species2GasName_("nHeptane.gas"),
+    W1_(84.16/1000.0),
+    W2_(100.2/1000.0),
     rhoLiquid_(-1),
     rhoGas_(-1),
     densityLiquidAlphaCutoff_(0.99),
@@ -971,13 +1493,35 @@ totalRefluxPatchGasMeanVelocityForce
     maxPressureGradient_(-1),
     maxDeltaPressureGradient_(-1),
     lastIntegratedTimeIndex_(-1),
-    accumulatedLiquidVolume_(0),
+    accumulatedEquivalentGasVolume_(0),
     accumulatedTime_(0),
     liquidFlowRate_(0),
     patchArea_(0),
     instantLiquidLoading_(0),
     liquidLoading_(0),
     liquidLoadingInitialized_(false),
+    totalMassFlowRateDown_(0),
+    liquidVolumeFlowRateDown_(0),
+    gasVolumeFlowRateDown_(0),
+    instantGasLoadingTarget_(0),
+    gasLoadingTarget_(0),
+    balanceControl_(true),
+    balanceWindow_(0.01),
+    balanceTolerance_(1e-8),
+    balanceRelativeTolerance_(1e-4),
+    balanceIntegralGain_(0.25),
+    maxBalanceCorrection_(-1),
+    maxBalanceCorrectionFraction_(-1),
+    gasMassFlowRateUp_(0),
+    gasVolumeFlowRateUp_(0),
+    totalMolarFlowRateDown_(0),
+    gasMolarFlowRateUp_(0),
+    gasMolarConcentrationPatchMean_(0),
+    balanceErrorRate_(0),
+    balanceWindowErrorMass_(0),
+    balanceWindowTime_(0),
+    balanceCorrectionLoading_(0),
+    lastBalanceUpdateTimeIndex_(-1),
     targetUbar_(Zero),
     rhoLiquidPatchMean_(0),
     rhoGasPatchMean_(0),
@@ -1001,26 +1545,46 @@ totalRefluxPatchGasMeanVelocityForce
         dictionary propsDict(dictionary::null, propsFile);
         propsDict.lookup("gradient") >> gradP0_;
 
-        if (propsDict.readIfPresent("liquidLoading", liquidLoading_))
+        if (propsDict.readIfPresent("gasLoadingTarget", gasLoadingTarget_))
         {
+            liquidLoading_ = gasLoadingTarget_;
             liquidLoadingInitialized_ = true;
         }
-        propsDict.readIfPresent("accumulatedLiquidVolume", accumulatedLiquidVolume_);
+        else if (propsDict.readIfPresent("liquidLoading", liquidLoading_))
+        {
+            gasLoadingTarget_ = liquidLoading_;
+            liquidLoadingInitialized_ = true;
+        }
+
+        propsDict.readIfPresent
+        (
+            "accumulatedEquivalentGasVolume",
+            accumulatedEquivalentGasVolume_
+        );
         propsDict.readIfPresent("accumulatedTime", accumulatedTime_);
     }
 
     Info<< "Initial pressure gradient = " << gradP0_ << nl
         << "Total reflux source is field-based and solver-independent." << nl
+        << "Target definition: "
+        << (molarTotalReflux_ ? word("NGasUp,target = NDown") : word("rhoG*QGup,target = rhoL*QLdown + rhoG*QGdown")) << nl
+        << "Window balance correction: "
+        << (balanceControl_ ? word("on") : word("off"))
+        << ", window = " << balanceWindow_
+        << " s, tolerance = " << balanceTolerance_
+        << (molarTotalReflux_ ? " mol/s" : " kg/s")
+        << ", relative tolerance = " << balanceRelativeTolerance_
+        << ", gain = " << balanceIntegralGain_ << nl
         << "Liquid alpha field = "
         << (alphaName_ == word::null ? word("auto") : alphaName_)
         << ", liquid alphaPhi field = "
         << (alphaPhiName_ == word::null ? word("auto") : alphaPhiName_)
         << ", fallback phi = " << phiName_ << nl
-        << "Liquid loading mode = " << liquidFluxMode_
+        << "Flux measurement mode = " << liquidFluxMode_
         << ", counterCurrent = " << counterCurrent_ << nl
-        << "Liquid loading is low-pass filtered with time scale "
+        << "Target gas loading is low-pass filtered with time scale "
         << averagingInterval_ << " s" << nl
-        << "Gas target direction = " << gasDirection_ << nl
+        << "Gas target direction = " << gasDirection_
         << endl;
 }
 
@@ -1054,9 +1618,11 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::constrain
             << exit(FatalError);
     }
 
-    const volScalarField& alpha1 = mesh().lookupObject<volScalarField>(alphaFieldName);
+    const volScalarField& alpha1 =
+        mesh().lookupObject<volScalarField>(alphaFieldName);
 
-    const volVectorField& U = mesh().lookupObject<volVectorField>(UName_);
+    const volVectorField& U =
+        mesh().lookupObject<volVectorField>(UName_);
 
     updateTarget(U, alpha1);
 
@@ -1140,19 +1706,30 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::constrain
     }
 
     const word alphaFieldName(actualAlphaName());
-    const volScalarField& alpha1 = mesh().lookupObject<volScalarField>(alphaFieldName);
+    const volScalarField& alpha1 =
+        mesh().lookupObject<volScalarField>(alphaFieldName);
+
     const volScalarField& rA = rAPtr_();
     const scalarField& rAU = rA;
     const labelList& cells = zone_.zone();
 
+    updateTarget(U, alpha1);
+
+    scalar jGbarAve = this->patchGasUbarAve(U, alpha1);
+    const scalar jGtarget = gasDirection_ & targetUbar_;
+
     if (mag(targetUbar_) <= SMALL)
     {
-        Info<< "Total reflux gas target is zero for " << name()
-            << ": alpha = " << alpha1.name()
-            << ", liquid QL = " << liquidFlowRate_
-            << ", patch area = " << patchArea_
-            << ", liquid loading B_L = " << liquidLoading_
-            << ", target jG = " << targetUbar_ << endl;
+        Info<< "Total-reflux gas pressure gradient source:"
+            << " mDown = " << totalMassFlowRateDown_
+            << ", QLdown = " << liquidVolumeFlowRateDown_
+            << ", QGdown = " << gasVolumeFlowRateDown_
+            << ", QGup = " << gasVolumeFlowRateUp_
+            << ", balanceErr = " << balanceErrorRate_
+            << ", target jG = " << jGtarget
+            << ", actual jG = " << jGbarAve
+            << ", pressure gradient = " << gradP0_ + dGradP_
+            << endl;
 
         writeProps(0);
         return true;
@@ -1174,9 +1751,6 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::constrain
         return true;
     }
 
-    const scalar jGbarAve = this->patchGasUbarAve(U, alpha1);
-    const scalar jGtarget = gasDirection_ & targetUbar_;
-
     dGradP_ = relaxation_*(jGtarget - jGbarAve)/max(rAUeff, SMALL);
 
     if (maxDeltaPressureGradient_ > 0 && mag(dGradP_) > maxDeltaPressureGradient_)
@@ -1188,7 +1762,9 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::constrain
     if (maxPressureGradient_ > 0 && mag(gradP0_ + dGradP_) > maxPressureGradient_)
     {
         const scalar limitedGradP =
-            (gradP0_ + dGradP_) < 0 ? -maxPressureGradient_ : maxPressureGradient_;
+            (gradP0_ + dGradP_) < 0
+          ? -maxPressureGradient_
+          :  maxPressureGradient_;
 
         dGradP_ = limitedGradP - gradP0_;
     }
@@ -1201,10 +1777,25 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::constrain
         U[celli] += w*gasDirection_*rAU[celli]*dGradP_;
     }
 
+    U.correctBoundaryConditions();
+
+    // Update the integral balance controller with the corrected velocity.
+    // Its correction affects the target in the following calls/time windows.
+    updateBalanceController(U, alpha1);
+
+    jGbarAve = this->patchGasUbarAve(U, alpha1);
+
     const scalar gradP = gradP0_ + dGradP_;
 
-        Info<< "Total-reflux gas pressure gradient source:"
-        << "  filtered liquid loading B_L = " << liquidLoading_
+    Info<< "Total-reflux gas pressure gradient source:"
+        << " mDown = " << totalMassFlowRateDown_
+        << ", QLdown = " << liquidVolumeFlowRateDown_
+        << ", QGdown = " << gasVolumeFlowRateDown_
+        << ", QGup = " << gasVolumeFlowRateUp_
+        << ", mGasUp = " << gasMassFlowRateUp_
+        << ", balanceErr = " << balanceErrorRate_
+        << ", balanceCorrJ = " << balanceCorrectionLoading_
+        << ", filtered target jG = " << gasLoadingTarget_
         << ", filter time = " << averagingInterval_
         << ", jG target/actual= " << jGtarget << "/" << jGbarAve
         << ", pressure gradient = " << gradP
@@ -1261,10 +1852,7 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::read
         readCoeffs(coeffs(dict));
         return true;
     }
-    else
-    {
-        return false;
-    }
+
+    return false;
 }
 
-// ************************************************************************* //

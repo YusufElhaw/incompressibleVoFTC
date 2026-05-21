@@ -36,7 +36,7 @@ License
 
 void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
 {
-    compositionPredictor();
+    // compositionPredictor();
 
     volScalarField& T = mixture.T();
 

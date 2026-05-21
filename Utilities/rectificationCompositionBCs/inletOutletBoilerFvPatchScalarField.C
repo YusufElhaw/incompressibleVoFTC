@@ -1,217 +1,39 @@
 /*---------------------------------------------------------------------------*\
-  Dynamic boiler inlet/outlet composition boundary condition
+  Dynamic reboiler finite-holdup inletOutlet composition boundary condition
 \*---------------------------------------------------------------------------*/
 
 #include "inletOutletBoilerFvPatchScalarField.H"
+
 #include "addToRunTimeSelectionTable.H"
 #include "fieldMapper.H"
 #include "volFields.H"
 #include "surfaceFields.H"
-#include "IOdictionary.H"
 #include "typeInfo.H"
+#include <fstream>
+#include "OSspecific.H"
 
 namespace Foam
 {
 
-scalar inletOutletBoilerFvPatchScalarField::clamp(const scalar x) const
+scalar inletOutletBoilerFvPatchScalarField::clamp
+(
+    const scalar x
+) const
 {
     return min(max(x, minValue_), maxValue_);
 }
 
 
-wordList inletOutletBoilerFvPatchScalarField::phaseNames() const
-{
-    const fvMesh& mesh = patch().boundaryMesh().mesh();
-
-    IOdictionary phaseProperties
-    (
-        IOobject
-        (
-            "phaseProperties",
-            mesh.time().constant(),
-            mesh,
-            IOobject::MUST_READ,
-            IOobject::NO_WRITE
-        )
-    );
-
-    wordList phases;
-    phaseProperties.lookup("phases") >> phases;
-
-    if (phases.size() != 2)
-    {
-        FatalErrorInFunction
-            << "Expected exactly two phases in constant/phaseProperties, "
-            << "but found " << phases << nl
-            << "This boundary condition assumes one liquid phase and one gas phase."
-            << exit(FatalError);
-    }
-
-    return phases;
-}
-
-
-word inletOutletBoilerFvPatchScalarField::alphaFieldName
+scalar inletOutletBoilerFvPatchScalarField::yVLE
 (
-    const word& phaseName
+    const scalar x,
+    const scalar A
 ) const
 {
-    return IOobject::groupName("alpha", phaseName);
-}
+    const scalar xb = clamp(x);
+    const scalar Ab = max(A, SMALL);
 
-
-word inletOutletBoilerFvPatchScalarField::alphaPhiName
-(
-    const word& phaseName
-) const
-{
-    return IOobject::groupName("alphaPhi", phaseName);
-}
-
-
-word inletOutletBoilerFvPatchScalarField::liquidPhaseName() const
-{
-    const fvMesh& mesh = patch().boundaryMesh().mesh();
-    const wordList phases = phaseNames();
-
-    wordList candidates(phases.size());
-    label n = 0;
-
-    // IMPORTANT:
-    // Do not use mesh.foundObject<volScalarField>("alpha.<phase>") here.
-    // During run-time OpenFOAM/incompressibleVoF may register both alpha fields
-    // although only one alpha.<phase> file exists in the case. The intended
-    // incompressibleVoFTC convention is:
-    //
-    //     the single alpha.<phase> file in the start-time folder is liquid.
-    //
-    // Therefore detect the liquid phase from disk, not from the objectRegistry.
-    forAll(phases, i)
-    {
-        const word aName = alphaFieldName(phases[i]);
-
-        IOobject aHeader
-        (
-            aName,
-            mesh.time().startTime().name(),
-            mesh,
-            IOobject::READ_IF_PRESENT,
-            IOobject::NO_WRITE,
-            false
-        );
-
-        if (aHeader.headerOk())
-        {
-            candidates[n++] = phases[i];
-        }
-    }
-
-    candidates.setSize(n);
-
-    if (n == 1)
-    {
-        return candidates[0];
-    }
-
-    FatalErrorInFunction
-        << "Could not determine the liquid phase from the start-time "
-        << "alpha.<phase> file." << nl
-        << "Exactly one alpha.<phase> file must exist in "
-        << mesh.time().startTime().name() << "." << nl
-        << "The objectRegistry is intentionally not used because both phase "
-        << "alpha fields may be registered during run-time." << nl
-        << "phases = " << phases << nl
-        << "matching alpha files = " << candidates
-        << exit(FatalError);
-
-    return word();
-
-}
-
-
-word inletOutletBoilerFvPatchScalarField::gasPhaseName
-(
-    const word& liquidPhaseName
-) const
-{
-    const wordList phases = phaseNames();
-
-    forAll(phases, i)
-    {
-        if (phases[i] != liquidPhaseName)
-        {
-            return phases[i];
-        }
-    }
-
-    FatalErrorInFunction
-        << "Could not determine the gas phase. Liquid phase is "
-        << liquidPhaseName << ", phases are " << phases
-        << exit(FatalError);
-
-    return word();
-}
-
-
-void inletOutletBoilerFvPatchScalarField::setAutomaticFluxNames()
-{
-    // incompressibleVoFTC convention for this BC library:
-    // The single alpha.<phase> field present in the case/registry identifies
-    // the liquid phase. The other phase in phaseProperties is treated as gas.
-    const word liquid = liquidPhaseName();
-    const word gas = gasPhaseName(liquid);
-
-    // Boiler/reboiler:
-    // - measure outgoing liquid composition
-    // - impose incoming gas composition
-    samplePhiName_ = alphaPhiName(liquid);
-    phiName_       = alphaPhiName(gas);
-}
-
-
-void inletOutletBoilerFvPatchScalarField::readPatchSelection
-(
-    const dictionary& dict
-)
-{
-    if (dict.found("patches"))
-    {
-        dict.lookup("patches") >> patchNames_;
-        usePatchList_ = true;
-    }
-    else if (dict.found("otherBoilerPatches"))
-    {
-        wordList others;
-        dict.lookup("otherBoilerPatches") >> others;
-
-        patchNames_.setSize(others.size() + 1);
-        patchNames_[0] = patch().name();
-        forAll(others, i)
-        {
-            patchNames_[i + 1] = others[i];
-        }
-        usePatchList_ = true;
-    }
-
-    if (usePatchList_)
-    {
-        bool hasThisPatch = false;
-        forAll(patchNames_, i)
-        {
-            if (patchNames_[i] == patch().name())
-            {
-                hasThisPatch = true;
-                break;
-            }
-        }
-
-        if (!hasThisPatch)
-        {
-            const label n = patchNames_.size();
-            patchNames_.setSize(n + 1);
-            patchNames_[n] = patch().name();
-        }
-    }
+    return clamp(Ab*xb/max(scalar(1) + (Ab - scalar(1))*xb, SMALL));
 }
 
 
@@ -228,11 +50,16 @@ wordList inletOutletBoilerFvPatchScalarField::selectedPatchNames() const
     }
 
     const fvMesh& mesh = patch().boundaryMesh().mesh();
-    const volScalarField& x =
-        mesh.lookupObject<volScalarField>(internalField().name());
 
-    const label nPatches = x.boundaryField().size();
-    wordList names(nPatches);
+    if (!mesh.foundObject<volScalarField>(this->internalField().name()))
+    {
+        return wordList(1, patch().name());
+    }
+
+    const volScalarField& x =
+        mesh.lookupObject<volScalarField>(this->internalField().name());
+
+    wordList names(x.boundaryField().size());
     label n = 0;
 
     forAll(x.boundaryField(), patchi)
@@ -261,144 +88,759 @@ wordList inletOutletBoilerFvPatchScalarField::selectedPatchNames() const
 }
 
 
-label inletOutletBoilerFvPatchScalarField::patchID(const word& name) const
-{
-    const fvBoundaryMesh& bm = patch().boundaryMesh();
-
-    forAll(bm, patchi)
-    {
-        if (bm[patchi].name() == name)
-        {
-            return patchi;
-        }
-    }
-
-    FatalErrorInFunction
-        << "Patch " << name << " was requested by boundary condition "
-        << type() << " on patch " << patch().name()
-        << ", but it does not exist in the mesh boundary."
-        << exit(FatalError);
-
-    return -1;
-}
-
-
-scalar inletOutletBoilerFvPatchScalarField::outgoingLiquidMean
+label inletOutletBoilerFvPatchScalarField::patchID
 (
-    const wordList& patchNames
+    const word& patchName
 ) const
 {
     const fvMesh& mesh = patch().boundaryMesh().mesh();
 
-    const volScalarField& x =
-        mesh.lookupObject<volScalarField>(internalField().name());
+    const label patchi = mesh.boundaryMesh().findIndex(patchName);
 
-    const surfaceScalarField& samplePhi =
-        mesh.lookupObject<surfaceScalarField>(samplePhiName_);
-
-    scalar num = 0;
-    scalar den = 0;
-
-    forAll(patchNames, i)
+    if (patchi < 0)
     {
-        const label patchi = patchID(patchNames[i]);
+        FatalErrorInFunction
+            << "Cannot find patch " << patchName << nl
+            << "Available patches are " << mesh.boundaryMesh().names()
+            << exit(FatalError);
+    }
 
-        const fvsPatchField<scalar>& samplePhip =
-            samplePhi.boundaryField()[patchi];
+    return patchi;
+}
+
+
+const surfaceScalarField&
+inletOutletBoilerFvPatchScalarField::lookupSurfaceFlux
+(
+    const word& name
+) const
+{
+    const fvMesh& mesh = patch().boundaryMesh().mesh();
+
+    if (!mesh.foundObject<surfaceScalarField>(name))
+    {
+        FatalErrorInFunction
+            << "Cannot find surfaceScalarField " << name << nl
+            << "Available surfaceScalarFields are "
+            << mesh.toc<surfaceScalarField>() << nl
+            << "For incompressibleVoFTC the expected defaults are:" << nl
+            << "    liquidFlux alphaCLPhi1;" << nl
+            << "    gasFlux    alphaCGPhi2;"
+            << exit(FatalError);
+    }
+
+    return mesh.lookupObject<surfaceScalarField>(name);
+}
+
+
+bool inletOutletBoilerFvPatchScalarField::compositionFluxFieldsAvailable() const
+{
+    const fvMesh& mesh = patch().boundaryMesh().mesh();
+
+    return
+        mesh.foundObject<surfaceScalarField>(liquidFluxName_)
+     && mesh.foundObject<surfaceScalarField>(gasFluxName_)
+     && mesh.foundObject<volScalarField>(this->internalField().name())
+     && mesh.foundObject<volScalarField>(A12Name_);
+}
+
+void inletOutletBoilerFvPatchScalarField::measureCompositionPredictorFluxes
+(
+    const wordList& patchNames,
+    scalar& nLtoReservoir,
+    scalar& nGtoReservoir,
+    scalar& nLfromReservoir,
+    scalar& nGfromReservoir,
+    scalar& n1LtoReservoir,
+    scalar& n1GtoReservoir,
+    scalar& n1LfromReservoir,
+    scalar& n1GfromReservoir
+) const
+{
+    const fvMesh& mesh = patch().boundaryMesh().mesh();
+
+    if (!compositionFluxFieldsAvailable())
+    {
+        FatalErrorInFunction
+            << "Cannot measure compositionPredictor fluxes. Missing fields:" << nl
+            << "  liquidFlux=" << liquidFluxName_
+            << " found=" << mesh.foundObject<surfaceScalarField>(liquidFluxName_) << nl
+            << "  gasFlux=" << gasFluxName_
+            << " found=" << mesh.foundObject<surfaceScalarField>(gasFluxName_) << nl
+            << "  X=" << this->internalField().name()
+            << " found=" << mesh.foundObject<volScalarField>(this->internalField().name()) << nl
+            << "  A12=" << A12Name_
+            << " found=" << mesh.foundObject<volScalarField>(A12Name_) << nl
+            << exit(FatalError);
+    }
+
+    const surfaceScalarField& liquidFlux =
+        lookupSurfaceFlux(liquidFluxName_);
+
+    const surfaceScalarField& gasFlux =
+        lookupSurfaceFlux(gasFluxName_);
+
+    const volScalarField& X =
+        mesh.lookupObject<volScalarField>(this->internalField().name());
+
+    const scalar Amean = meanA12(patchNames);
+    const scalar xB = reservoirX_;
+    const scalar yB = yVLE(xB, Amean);
+
+    nLtoReservoir = 0;
+    nGtoReservoir = 0;
+    nLfromReservoir = 0;
+    nGfromReservoir = 0;
+
+    n1LtoReservoir = 0;
+    n1GtoReservoir = 0;
+    n1LfromReservoir = 0;
+    n1GfromReservoir = 0;
+
+    forAll(patchNames, patchNamei)
+    {
+        const label patchi = patchID(patchNames[patchNamei]);
+
+        const fvsPatchScalarField& Lp =
+            liquidFlux.boundaryField()[patchi];
+
+        const fvsPatchScalarField& Gp =
+            gasFlux.boundaryField()[patchi];
 
         const scalarField xPatchInternal
         (
-            x.boundaryField()[patchi].patchInternalField()
+            X.boundaryField()[patchi].patchInternalField()
         );
 
-        forAll(samplePhip, facei)
+        forAll(Lp, facei)
         {
-            const scalar w = max(samplePhip[facei], scalar(0));
-            num += w*xPatchInternal[facei];
-            den += w;
+            // compositionPredictor convention for alphaCLPhi1/alphaCGPhi2:
+            // positive boundary flux leaves the CFD domain into the apparatus.
+            const scalar Lto = max( Lp[facei], scalar(0));
+            const scalar Gto = max( Gp[facei], scalar(0));
+
+            const scalar Lfrom = max(-Lp[facei], scalar(0));
+            const scalar Gfrom = max(-Gp[facei], scalar(0));
+
+            // Outflow from column into apparatus: VLE split for mixed cells.
+            // Solve X_overall*(Lto+Gto) = Lto*xL + Gto*yVLE(xL,A12) for xL.
+            const scalar xOut = clamp(xPatchInternal[facei]);
+            const scalar S = Lto + Gto;
+
+            scalar xL, yG;
+            if (S < SMALL || mag(Amean - 1) < 1e-10)
+            {
+                xL = xOut;
+                yG = xOut;
+            }
+            else if (Lto < SMALL)
+            {
+                // Pure gas: yG = xOut, invert VLE for xL
+                xL = clamp(xOut / max(Amean - xOut*(Amean - 1), SMALL));
+                yG = clamp(xOut);
+            }
+            else if (Gto < SMALL)
+            {
+                xL = xOut;
+                yG = yVLE(xOut, Amean);
+            }
+            else
+            {
+                const scalar a = Lto*(Amean - 1);
+                const scalar b = Lto + Gto*Amean - xOut*S*(Amean - 1);
+                const scalar c = -xOut*S;
+                xL = clamp((-b + sqrt(max(b*b - 4*a*c, scalar(0))))/(2*a));
+                yG = yVLE(xL, Amean);
+            }
+
+            nLtoReservoir += Lto;
+            nGtoReservoir += Gto;
+
+            nLfromReservoir += Lfrom;
+            nGfromReservoir += Gfrom;
+
+            n1LtoReservoir += Lto*xL;
+            n1GtoReservoir += Gto*yG;
+
+            // Boiler return into column: liquid gets xB, gas gets yB.
+            n1LfromReservoir += Lfrom*xB;
+            n1GfromReservoir += Gfrom*yB;
         }
     }
 
-    reduce(num, sumOp<scalar>());
-    reduce(den, sumOp<scalar>());
+    reduce(nLtoReservoir, sumOp<scalar>());
+    reduce(nGtoReservoir, sumOp<scalar>());
+    reduce(nLfromReservoir, sumOp<scalar>());
+    reduce(nGfromReservoir, sumOp<scalar>());
 
-    if (den > minFlux_)
+    reduce(n1LtoReservoir, sumOp<scalar>());
+    reduce(n1GtoReservoir, sumOp<scalar>());
+    reduce(n1LfromReservoir, sumOp<scalar>());
+    reduce(n1GfromReservoir, sumOp<scalar>());
+}
+
+void inletOutletBoilerFvPatchScalarField::readPatchSelection
+(
+    const dictionary& dict
+)
+{
+    if (dict.found("patches"))
     {
-        return clamp(num/den);
+        dict.lookup("patches") >> patchNames_;
+        usePatchList_ = true;
+    }
+    else
+    {
+        patchNames_.clear();
+        usePatchList_ = false;
     }
 
-    return measuredLiquidValue_;
+    if (usePatchList_)
+    {
+        bool hasThisPatch = false;
+
+        forAll(patchNames_, i)
+        {
+            if (patchNames_[i] == patch().name())
+            {
+                hasThisPatch = true;
+                break;
+            }
+        }
+
+        if (!hasThisPatch)
+        {
+            FatalErrorInFunction
+                << "Patch list for " << typeName
+                << " must include the current patch " << patch().name()
+                << ". Given patches = " << patchNames_
+                << exit(FatalError);
+        }
+
+        forAll(patchNames_, i)
+        {
+            patchID(patchNames_[i]);
+        }
+    }
 }
 
 
-scalar inletOutletBoilerFvPatchScalarField::oldInletMean
+scalar inletOutletBoilerFvPatchScalarField::meanA12
 (
     const wordList& patchNames
 ) const
 {
     const fvMesh& mesh = patch().boundaryMesh().mesh();
-    const volScalarField& x =
-        mesh.lookupObject<volScalarField>(internalField().name());
 
-    scalar sumValue = 0;
-    scalar nValue = 0;
-
-    forAll(patchNames, i)
+    if (!mesh.foundObject<volScalarField>(A12Name_))
     {
-        const label patchi = patchID(patchNames[i]);
-        const fvPatchScalarField& pf = x.boundaryField()[patchi];
+        FatalErrorInFunction
+            << "Cannot find volScalarField " << A12Name_ << nl
+            << "compositionPredictor should create and update A12 before "
+            << typeName << " is evaluated." << nl
+            << "Available volScalarFields are "
+            << mesh.toc<volScalarField>()
+            << exit(FatalError);
+    }
 
-        if (isA<inletOutletBoilerFvPatchScalarField>(pf))
+    const volScalarField& A12 =
+        mesh.lookupObject<volScalarField>(A12Name_);
+
+    scalar sumA = 0;
+    scalar sumA12A = 0;
+
+    forAll(patchNames, patchNamei)
+    {
+        const label patchi = patchID(patchNames[patchNamei]);
+
+        const scalarField& magSf = mesh.boundary()[patchi].magSf();
+        const fvPatchScalarField& A12p = A12.boundaryField()[patchi];
+
+        forAll(magSf, facei)
         {
-            const inletOutletBoilerFvPatchScalarField& bpf =
-                refCast<const inletOutletBoilerFvPatchScalarField>(pf);
+            const scalar A = magSf[facei];
 
-            sumValue += bpf.inletValue_;
-            nValue += 1;
+            sumA += A;
+            sumA12A += A12p[facei]*A;
         }
     }
 
-    reduce(sumValue, sumOp<scalar>());
-    reduce(nValue, sumOp<scalar>());
+    reduce(sumA, sumOp<scalar>());
+    reduce(sumA12A, sumOp<scalar>());
 
-    if (nValue > SMALL)
+    if (sumA <= SMALL)
     {
-        return clamp(sumValue/nValue);
+        FatalErrorInFunction
+            << "Patch area is zero while computing mean A12."
+            << exit(FatalError);
     }
 
-    return inletValue_;
+    return max(sumA12A/sumA, SMALL);
 }
 
 
-inletOutletBoilerFvPatchScalarField::inletOutletBoilerFvPatchScalarField
+void inletOutletBoilerFvPatchScalarField::advanceReservoir()
+{
+    const fvMesh& mesh = patch().boundaryMesh().mesh();
+
+    const label timeIndex = mesh.time().timeIndex();
+
+    if (timeIndex == lastReservoirUpdateIndex_)
+    {
+        return;
+    }
+
+    if (reservoirMoles_ <= minReservoirMoles_)
+    {
+        reservoirMoles_ = minReservoirMoles_;
+    }
+
+    // During field construction/read, OpenFOAM may call updateCoeffs()
+    // before compositionPredictor has created alphaCLPhi1/alphaCGPhi2/A12.
+    // Do not abort and do not mark this time step as updated. Later in the
+    // same time step, compositionPredictor creates the fields and calls
+    // correctBoundaryConditions(); then the reservoir is advanced.
+    if (!compositionFluxFieldsAvailable())
+    {
+        if (log_)
+        {
+            Info<< typeName << " " << patch().name()
+                << ": waiting for compositionPredictor flux fields before reservoir update:"
+                << " liquidFlux=" << liquidFluxName_
+                << " found=" << mesh.foundObject<surfaceScalarField>(liquidFluxName_)
+                << ", gasFlux=" << gasFluxName_
+                << " found=" << mesh.foundObject<surfaceScalarField>(gasFluxName_)
+                << ", A12=" << A12Name_
+                << " found=" << mesh.foundObject<volScalarField>(A12Name_)
+                << ", X=" << this->internalField().name()
+                << " found=" << mesh.foundObject<volScalarField>(this->internalField().name())
+                << endl;
+        }
+
+        return;
+    }
+
+    const scalar dt = mesh.time().deltaTValue();
+
+    if (dt <= SMALL)
+    {
+        lastReservoirUpdateIndex_ = timeIndex;
+        return;
+    }
+
+    const wordList patchNames = selectedPatchNames();
+
+    const scalar Amean = meanA12(patchNames);
+
+    scalar nLtoReservoir = 0;
+    scalar nGtoReservoir = 0;
+    scalar nLfromReservoir = 0;
+    scalar nGfromReservoir = 0;
+
+    scalar n1LtoReservoir = 0;
+    scalar n1GtoReservoir = 0;
+    scalar n1LfromReservoir = 0;
+    scalar n1GfromReservoir = 0;
+
+    measureCompositionPredictorFluxes
+    (
+        patchNames,
+        nLtoReservoir,
+        nGtoReservoir,
+        nLfromReservoir,
+        nGfromReservoir,
+        n1LtoReservoir,
+        n1GtoReservoir,
+        n1LfromReservoir,
+        n1GfromReservoir
+    );
+
+    const scalar n1ToReservoir =
+        n1LtoReservoir + n1GtoReservoir;
+
+    const scalar n1FromReservoir =
+        n1LfromReservoir + n1GfromReservoir;
+
+
+    const scalar NOld = reservoirMoles_;
+    const scalar xOld = reservoirX_;
+    const scalar yOld = yVLE(xOld, Amean);
+
+    const scalar nToReservoir =
+        nLtoReservoir + nGtoReservoir;
+
+    const scalar nFromReservoir =
+        nLfromReservoir + nGfromReservoir;
+
+
+    // Complete finite-holdup reboiler balances:
+    //   dN/dt       = L_toB + G_toB - L_fromB - G_fromB
+    //   d(N*x)/dt   = L_toB*x_L + G_toB*y_G
+    //               - L_fromB*x_B - G_fromB*y_VLE(x_B)
+    const scalar dNdt =
+        nToReservoir - nFromReservoir;
+
+    const scalar dN1dt =
+        n1ToReservoir - n1FromReservoir;
+
+    scalar NEuler =
+        NOld + dt*dNdt;
+
+    if (NEuler < minReservoirMoles_)
+    {
+        if (log_)
+        {
+            WarningInFunction
+                << typeName << " " << patch().name()
+                << ": boiler reservoir would be depleted. "
+                << "Clamping N from " << NEuler
+                << " to minReservoirMoles=" << minReservoirMoles_
+                << nl;
+        }
+
+        NEuler = minReservoirMoles_;
+    }
+
+    scalar N1Euler =
+        NOld*xOld + dt*dN1dt;
+
+    N1Euler =
+        min(max(N1Euler, minValue_*NEuler), maxValue_*NEuler);
+
+    // Relax both conserved variables consistently.
+    // relax = 1 gives the physical explicit Euler update.
+    const scalar N1Old = NOld*xOld;
+
+    const scalar NRelaxed =
+        max(NOld + relax_*(NEuler - NOld), minReservoirMoles_);
+
+    scalar N1Relaxed =
+        N1Old + relax_*(N1Euler - N1Old);
+
+    N1Relaxed =
+        min(max(N1Relaxed, minValue_*NRelaxed), maxValue_*NRelaxed);
+
+    reservoirMoles_ = NRelaxed;
+    reservoirX_ = clamp(N1Relaxed/reservoirMoles_);
+    reservoirY_ = yVLE(reservoirX_, Amean);
+    writeApparatusBalance
+    (
+        dt,
+        NOld,
+        xOld,
+        reservoirMoles_,
+        reservoirX_,
+        nLtoReservoir,
+        nGtoReservoir,
+        nLfromReservoir,
+        nGfromReservoir,
+        n1ToReservoir,
+        n1FromReservoir
+    );
+    lastReservoirUpdateIndex_ = timeIndex;
+
+    lastA12_ = Amean;
+    lastLiquidToReservoir_ = nLtoReservoir;
+    lastGasToReservoir_ = nGtoReservoir;
+    lastLiquidFromReservoir_ = nLfromReservoir;
+    lastGasFromReservoir_ = nGfromReservoir;
+    lastSpeciesToReservoir_ = n1ToReservoir;
+    lastSpeciesFromReservoir_ = n1FromReservoir;
+    lastMolesResidual_ = dNdt;
+    lastSpeciesResidual_ = dN1dt;
+
+    lastLiquidXToReservoir_ =
+        nLtoReservoir > minFlux_
+      ? n1LtoReservoir/nLtoReservoir
+      : xOld;
+
+    lastGasXToReservoir_ =
+        nGtoReservoir > minFlux_
+      ? n1GtoReservoir/nGtoReservoir
+      : yOld;
+
+    if (log_)
+    {
+        Info<< typeName << " " << patch().name()
+            << ": NB=" << reservoirMoles_
+            << ", xB=" << reservoirX_
+            << ", yB=" << reservoirY_
+            << ", A12=" << Amean
+            << ", LtoB=" << nLtoReservoir
+            << ", GtoB=" << nGtoReservoir
+            << ", LfromB=" << nLfromReservoir
+            << ", GfromB=" << nGfromReservoir
+            << ", xLtoB=" << lastLiquidXToReservoir_
+            << ", xGtoB=" << lastGasXToReservoir_
+            << ", speciesToB=" << n1ToReservoir
+            << ", speciesFromB=" << n1FromReservoir
+            << ", dNdt=" << dNdt
+            << ", dN1dt=" << dN1dt
+            << endl;
+    }
+}
+
+void Foam::inletOutletBoilerFvPatchScalarField::writeApparatusBalance
+(
+    const scalar dt,
+    const scalar NOld,
+    const scalar xOld,
+    const scalar NNew,
+    const scalar xNew,
+    const scalar nLtoReservoir,
+    const scalar nGtoReservoir,
+    const scalar nLfromReservoir,
+    const scalar nGfromReservoir,
+    const scalar n1ToReservoir,
+    const scalar n1FromReservoir
+) const
+{
+    if (!writeBalance_ || !Pstream::master())
+    {
+        return;
+    }
+
+    const fvMesh& mesh = patch().boundaryMesh().mesh();
+
+    const scalar N1Old = NOld*xOld;
+    const scalar N1New = NNew*xNew;
+
+    const scalar Nto = nLtoReservoir + nGtoReservoir;
+    const scalar Nfrom = nLfromReservoir + nGfromReservoir;
+
+    const scalar dNdt = Nto - Nfrom;
+    const scalar dN1dt = n1ToReservoir - n1FromReservoir;
+
+    const scalar dNSoll = dt*dNdt;
+    const scalar dNIst = NNew - NOld;
+
+    const scalar dN1Soll = dt*dN1dt;
+    const scalar dN1Ist = N1New - N1Old;
+
+    const scalar NSoll = NOld + dNSoll;
+    const scalar N1Soll = N1Old + dN1Soll;
+
+    const scalar N2Old = NOld - N1Old;
+    const scalar N2New = NNew - N1New;
+
+    const scalar N2to = Nto - n1ToReservoir;
+    const scalar N2from = Nfrom - n1FromReservoir;
+
+    const scalar dN2Soll = dt*(N2to - N2from);
+    const scalar dN2Ist = N2New - N2Old;
+
+    const scalar xTo =
+        Nto > minFlux_
+      ? n1ToReservoir/Nto
+      : xOld;
+
+    const scalar xFrom =
+        Nfrom > minFlux_
+      ? n1FromReservoir/Nfrom
+      : xOld;
+
+    const fileName dir =
+        mesh.time().globalPath()
+       /"postProcessing"
+       /"apparatusBalance"
+       /mesh.time().startTime().name();
+
+    mkDir(dir);
+
+    const fileName file = dir/(patch().name() + ".dat");
+
+    const bool newFile = !isFile(file);
+
+    std::ofstream os(file.c_str(), std::ios::app);
+
+    if (newFile)
+    {
+        os
+            << "# Time dt "
+            << "N_old x_old N1_old "
+            << "N_to N_from N1_to N1_from "
+            << "dN_soll dN_ist dN_error "
+            << "N_soll N_ist "
+            << "dN1_soll dN1_ist dN1_error "
+            << "N1_soll N1_ist "
+            << "N2_soll N2_ist dN2_error "
+            << "L_to G_to L_from G_from "
+            << "x_to x_from"
+            << std::endl;
+    }
+
+    os
+        << mesh.time().value() << " "
+        << dt << " "
+        << NOld << " "
+        << xOld << " "
+        << N1Old << " "
+        << Nto << " "
+        << Nfrom << " "
+        << n1ToReservoir << " "
+        << n1FromReservoir << " "
+        << dNSoll << " "
+        << dNIst << " "
+        << dNIst - dNSoll << " "
+        << NSoll << " "
+        << NNew << " "
+        << dN1Soll << " "
+        << dN1Ist << " "
+        << dN1Ist - dN1Soll << " "
+        << N1Soll << " "
+        << N1New << " "
+        << N2Old + dN2Soll << " "
+        << N2New << " "
+        << dN2Ist - dN2Soll << " "
+        << nLtoReservoir << " "
+        << nGtoReservoir << " "
+        << nLfromReservoir << " "
+        << nGfromReservoir << " "
+        << xTo << " "
+        << xFrom
+        << std::endl;
+}
+
+tmp<scalarField>
+inletOutletBoilerFvPatchScalarField::reservoirInletFraction() const
+{
+    tmp<scalarField> tfrac(new scalarField(patch().size(), scalar(0)));
+    scalarField& frac = tfrac.ref();
+
+    if (!compositionFluxFieldsAvailable())
+    {
+        return tfrac;
+    }
+
+    const surfaceScalarField& liquidFlux =
+        lookupSurfaceFlux(liquidFluxName_);
+
+    const surfaceScalarField& gasFlux =
+        lookupSurfaceFlux(gasFluxName_);
+
+    const label patchi = patch().index();
+
+    const fvsPatchScalarField& Lp =
+        liquidFlux.boundaryField()[patchi];
+
+    const fvsPatchScalarField& Gp =
+        gasFlux.boundaryField()[patchi];
+
+    forAll(frac, facei)
+    {
+        const scalar Lfrom = max(-Lp[facei], scalar(0));
+        const scalar Gfrom = max(-Gp[facei], scalar(0));
+
+        frac[facei] = ((Lfrom + Gfrom) > minFlux_) ? scalar(1) : scalar(0);
+    }
+
+    return tfrac;
+}
+
+tmp<scalarField>
+inletOutletBoilerFvPatchScalarField::reservoirInletValue() const
+{
+    tmp<scalarField> tval(new scalarField(patch().size(), reservoirY_));
+    scalarField& val = tval.ref();
+
+    if (!compositionFluxFieldsAvailable())
+    {
+        return tval;
+    }
+
+    const surfaceScalarField& liquidFlux =
+        lookupSurfaceFlux(liquidFluxName_);
+
+    const surfaceScalarField& gasFlux =
+        lookupSurfaceFlux(gasFluxName_);
+
+    const label patchi = patch().index();
+
+    const fvsPatchScalarField& Lp =
+        liquidFlux.boundaryField()[patchi];
+
+    const fvsPatchScalarField& Gp =
+        gasFlux.boundaryField()[patchi];
+
+    const scalar xB = reservoirX_;
+    const scalar yB = reservoirY_;
+
+    forAll(val, facei)
+    {
+        const scalar Lfrom = max(-Lp[facei], scalar(0));
+        const scalar Gfrom = max(-Gp[facei], scalar(0));
+        const scalar totalFrom = Lfrom + Gfrom;
+
+        if (totalFrom > minFlux_)
+        {
+            val[facei] = clamp((Lfrom*xB + Gfrom*yB)/totalFrom);
+        }
+        else
+        {
+            val[facei] = yB;
+        }
+    }
+
+    return tval;
+}
+
+inletOutletBoilerFvPatchScalarField::
+inletOutletBoilerFvPatchScalarField
 (
     const fvPatch& p,
     const DimensionedField<scalar, volMesh>& iF
 )
 :
     mixedFvPatchScalarField(p, iF),
-    phiName_(word()),
-    samplePhiName_(word()),
+    liquidFluxName_("alphaCLPhi1"),
+    gasFluxName_("alphaCGPhi2"),
+    A12Name_("A12"),
     groupName_(word()),
     patchNames_(),
     usePatchList_(false),
+    reservoirMoles_(1),
+    reservoirX_(0.5),
+    reservoirY_(0.5),
     relax_(1),
-    inletValue_(0),
-    measuredLiquidValue_(0),
     minValue_(0),
     maxValue_(1),
-    minFlux_(VSMALL)
+    minReservoirMoles_(SMALL),
+    minFlux_(VSMALL),
+    log_(true),
+    lastReservoirUpdateIndex_(-1),
+    lastA12_(1),
+    lastLiquidToReservoir_(0),
+    lastGasToReservoir_(0),
+    lastLiquidFromReservoir_(0),
+    lastGasFromReservoir_(0),
+    lastSpeciesToReservoir_(0),
+    lastSpeciesFromReservoir_(0),
+    lastMolesResidual_(0),
+    lastSpeciesResidual_(0),
+    lastLiquidXToReservoir_(0),
+    lastGasXToReservoir_(0),
+    writeBalance_(true),
+    useRawSpeciesFlux_(true),
+    UName_("U"),
+    alphaLiquidName_("alpha.liquid"),
+    rhoLiquidName_("rho.liquid"),
+    rhoGasName_("rho.gas"),
+    species1LiquidName_("cyclohexane.liquid"),
+    species2LiquidName_("nHeptane.liquid"),
+    species1GasName_("cyclohexane.gas"),
+    species2GasName_("nHeptane.gas"),
+    W1_(84.16/1000.0),
+    W2_(100.2/1000.0)
 {
-    setAutomaticFluxNames();
-
-    refValue() = inletValue_;
+    refValue() = reservoirY_;
     refGrad() = 0;
     valueFraction() = 0;
-    fvPatchScalarField::operator=(inletValue_);
+    fvPatchScalarField::operator=(reservoirY_);
 }
 
 
-inletOutletBoilerFvPatchScalarField::inletOutletBoilerFvPatchScalarField
+inletOutletBoilerFvPatchScalarField::
+inletOutletBoilerFvPatchScalarField
 (
     const fvPatch& p,
     const DimensionedField<scalar, volMesh>& iF,
@@ -406,29 +848,85 @@ inletOutletBoilerFvPatchScalarField::inletOutletBoilerFvPatchScalarField
 )
 :
     mixedFvPatchScalarField(p, iF, dict, false),
-    phiName_(word()),
-    samplePhiName_(word()),
+    liquidFluxName_(dict.lookupOrDefault<word>("liquidFlux", "alphaCLPhi1")),
+    gasFluxName_(dict.lookupOrDefault<word>("gasFlux", "alphaCGPhi2")),
+    A12Name_(dict.lookupOrDefault<word>("A12", "A12")),
     groupName_(dict.lookupOrDefault<word>("group", word())),
     patchNames_(),
     usePatchList_(false),
+    reservoirMoles_(dict.lookupOrDefault<scalar>("reservoirMoles", 1)),
+    reservoirX_(dict.lookupOrDefault<scalar>("reservoirX", 0.5)),
+    reservoirY_(dict.lookupOrDefault<scalar>("reservoirY", reservoirX_)),
     relax_(dict.lookupOrDefault<scalar>("relax", 1)),
-    inletValue_(dict.lookupOrDefault<scalar>("inletValue", 0)),
-    measuredLiquidValue_
-    (
-        dict.lookupOrDefault<scalar>("measuredLiquidValue", inletValue_)
-    ),
     minValue_(dict.lookupOrDefault<scalar>("minValue", 0)),
     maxValue_(dict.lookupOrDefault<scalar>("maxValue", 1)),
-    minFlux_(dict.lookupOrDefault<scalar>("minFlux", VSMALL))
+    minReservoirMoles_(dict.lookupOrDefault<scalar>("minReservoirMoles", SMALL)),
+    minFlux_(dict.lookupOrDefault<scalar>("minFlux", VSMALL)),
+    log_(dict.lookupOrDefault<Switch>("log", true)),
+    lastReservoirUpdateIndex_(-1),
+    lastA12_(dict.lookupOrDefault<scalar>("lastA12", 1)),
+    lastLiquidToReservoir_
+    (
+        dict.lookupOrDefault<scalar>("lastLiquidToReservoir", 0)
+    ),
+    lastGasToReservoir_
+    (
+        dict.lookupOrDefault<scalar>("lastGasToReservoir", 0)
+    ),
+    lastLiquidFromReservoir_
+    (
+        dict.lookupOrDefault<scalar>("lastLiquidFromReservoir", 0)
+    ),
+    lastGasFromReservoir_
+    (
+        dict.lookupOrDefault<scalar>("lastGasFromReservoir", 0)
+    ),
+    lastSpeciesToReservoir_
+    (
+        dict.lookupOrDefault<scalar>("lastSpeciesToReservoir", 0)
+    ),
+    lastSpeciesFromReservoir_
+    (
+        dict.lookupOrDefault<scalar>("lastSpeciesFromReservoir", 0)
+    ),
+    lastMolesResidual_
+    (
+        dict.lookupOrDefault<scalar>("lastMolesResidual", 0)
+    ),
+    lastSpeciesResidual_
+    (
+        dict.lookupOrDefault<scalar>("lastSpeciesResidual", 0)
+    ),
+    lastLiquidXToReservoir_
+    (
+        dict.lookupOrDefault<scalar>("lastLiquidXToReservoir", reservoirX_)
+    ),
+    lastGasXToReservoir_
+    (
+        dict.lookupOrDefault<scalar>("lastGasXToReservoir", reservoirY_)
+    ),
+    writeBalance_(dict.lookupOrDefault<Switch>("writeBalance", true)),
+    useRawSpeciesFlux_(dict.lookupOrDefault<Switch>("useRawSpeciesFlux", true)),
+    UName_(dict.lookupOrDefault<word>("U", "U")),
+    alphaLiquidName_(dict.lookupOrDefault<word>("alphaLiquid", "alpha.liquid")),
+    rhoLiquidName_(dict.lookupOrDefault<word>("rhoLiquid", "rho.liquid")),
+    rhoGasName_(dict.lookupOrDefault<word>("rhoGas", "rho.gas")),
+    species1LiquidName_(dict.lookupOrDefault<word>("species1Liquid", "cyclohexane.liquid")),
+    species2LiquidName_(dict.lookupOrDefault<word>("species2Liquid", "nHeptane.liquid")),
+    species1GasName_(dict.lookupOrDefault<word>("species1Gas", "cyclohexane.gas")),
+    species2GasName_(dict.lookupOrDefault<word>("species2Gas", "nHeptane.gas")),
+    W1_(dict.lookupOrDefault<scalar>("W1", 84.16)/1000.0),
+    W2_(dict.lookupOrDefault<scalar>("W2", 100.2)/1000.0)
 {
-    setAutomaticFluxNames();
     readPatchSelection(dict);
 
-    inletValue_ = clamp(inletValue_);
-    measuredLiquidValue_ = clamp(measuredLiquidValue_);
+    reservoirX_ = clamp(reservoirX_);
+    reservoirY_ = clamp(reservoirY_);
     relax_ = min(max(relax_, scalar(0)), scalar(1));
+    minReservoirMoles_ = max(minReservoirMoles_, VSMALL);
+    reservoirMoles_ = max(reservoirMoles_, minReservoirMoles_);
 
-    refValue() = inletValue_;
+    refValue() = reservoirY_;
     refGrad() = 0;
     valueFraction() = 0;
 
@@ -441,12 +939,13 @@ inletOutletBoilerFvPatchScalarField::inletOutletBoilerFvPatchScalarField
     }
     else
     {
-        fvPatchScalarField::operator=(inletValue_);
+        fvPatchScalarField::operator=(reservoirY_);
     }
 }
 
 
-inletOutletBoilerFvPatchScalarField::inletOutletBoilerFvPatchScalarField
+inletOutletBoilerFvPatchScalarField::
+inletOutletBoilerFvPatchScalarField
 (
     const inletOutletBoilerFvPatchScalarField& ptf,
     const fvPatch& p,
@@ -455,38 +954,95 @@ inletOutletBoilerFvPatchScalarField::inletOutletBoilerFvPatchScalarField
 )
 :
     mixedFvPatchScalarField(ptf, p, iF, mapper),
-    phiName_(ptf.phiName_),
-    samplePhiName_(ptf.samplePhiName_),
+    liquidFluxName_(ptf.liquidFluxName_),
+    gasFluxName_(ptf.gasFluxName_),
+    A12Name_(ptf.A12Name_),
     groupName_(ptf.groupName_),
     patchNames_(ptf.patchNames_),
     usePatchList_(ptf.usePatchList_),
+    reservoirMoles_(ptf.reservoirMoles_),
+    reservoirX_(ptf.reservoirX_),
+    reservoirY_(ptf.reservoirY_),
     relax_(ptf.relax_),
-    inletValue_(ptf.inletValue_),
-    measuredLiquidValue_(ptf.measuredLiquidValue_),
     minValue_(ptf.minValue_),
     maxValue_(ptf.maxValue_),
-    minFlux_(ptf.minFlux_)
+    minReservoirMoles_(ptf.minReservoirMoles_),
+    minFlux_(ptf.minFlux_),
+    log_(ptf.log_),
+    lastReservoirUpdateIndex_(ptf.lastReservoirUpdateIndex_),
+    lastA12_(ptf.lastA12_),
+    lastLiquidToReservoir_(ptf.lastLiquidToReservoir_),
+    lastGasToReservoir_(ptf.lastGasToReservoir_),
+    lastLiquidFromReservoir_(ptf.lastLiquidFromReservoir_),
+    lastGasFromReservoir_(ptf.lastGasFromReservoir_),
+    lastSpeciesToReservoir_(ptf.lastSpeciesToReservoir_),
+    lastSpeciesFromReservoir_(ptf.lastSpeciesFromReservoir_),
+    lastMolesResidual_(ptf.lastMolesResidual_),
+    lastSpeciesResidual_(ptf.lastSpeciesResidual_),
+    lastLiquidXToReservoir_(ptf.lastLiquidXToReservoir_),
+    lastGasXToReservoir_(ptf.lastGasXToReservoir_),
+    writeBalance_(ptf.writeBalance_),
+    useRawSpeciesFlux_(ptf.useRawSpeciesFlux_),
+    UName_(ptf.UName_),
+    alphaLiquidName_(ptf.alphaLiquidName_),
+    rhoLiquidName_(ptf.rhoLiquidName_),
+    rhoGasName_(ptf.rhoGasName_),
+    species1LiquidName_(ptf.species1LiquidName_),
+    species2LiquidName_(ptf.species2LiquidName_),
+    species1GasName_(ptf.species1GasName_),
+    species2GasName_(ptf.species2GasName_),
+    W1_(ptf.W1_),
+    W2_(ptf.W2_)
 {}
 
 
-inletOutletBoilerFvPatchScalarField::inletOutletBoilerFvPatchScalarField
+inletOutletBoilerFvPatchScalarField::
+inletOutletBoilerFvPatchScalarField
 (
     const inletOutletBoilerFvPatchScalarField& ptf,
     const DimensionedField<scalar, volMesh>& iF
 )
 :
     mixedFvPatchScalarField(ptf, iF),
-    phiName_(ptf.phiName_),
-    samplePhiName_(ptf.samplePhiName_),
+    liquidFluxName_(ptf.liquidFluxName_),
+    gasFluxName_(ptf.gasFluxName_),
+    A12Name_(ptf.A12Name_),
     groupName_(ptf.groupName_),
     patchNames_(ptf.patchNames_),
     usePatchList_(ptf.usePatchList_),
+    reservoirMoles_(ptf.reservoirMoles_),
+    reservoirX_(ptf.reservoirX_),
+    reservoirY_(ptf.reservoirY_),
     relax_(ptf.relax_),
-    inletValue_(ptf.inletValue_),
-    measuredLiquidValue_(ptf.measuredLiquidValue_),
     minValue_(ptf.minValue_),
     maxValue_(ptf.maxValue_),
-    minFlux_(ptf.minFlux_)
+    minReservoirMoles_(ptf.minReservoirMoles_),
+    minFlux_(ptf.minFlux_),
+    log_(ptf.log_),
+    lastReservoirUpdateIndex_(ptf.lastReservoirUpdateIndex_),
+    lastA12_(ptf.lastA12_),
+    lastLiquidToReservoir_(ptf.lastLiquidToReservoir_),
+    lastGasToReservoir_(ptf.lastGasToReservoir_),
+    lastLiquidFromReservoir_(ptf.lastLiquidFromReservoir_),
+    lastGasFromReservoir_(ptf.lastGasFromReservoir_),
+    lastSpeciesToReservoir_(ptf.lastSpeciesToReservoir_),
+    lastSpeciesFromReservoir_(ptf.lastSpeciesFromReservoir_),
+    lastMolesResidual_(ptf.lastMolesResidual_),
+    lastSpeciesResidual_(ptf.lastSpeciesResidual_),
+    lastLiquidXToReservoir_(ptf.lastLiquidXToReservoir_),
+    lastGasXToReservoir_(ptf.lastGasXToReservoir_),
+    writeBalance_(ptf.writeBalance_),
+    useRawSpeciesFlux_(ptf.useRawSpeciesFlux_),
+    UName_(ptf.UName_),
+    alphaLiquidName_(ptf.alphaLiquidName_),
+    rhoLiquidName_(ptf.rhoLiquidName_),
+    rhoGasName_(ptf.rhoGasName_),
+    species1LiquidName_(ptf.species1LiquidName_),
+    species2LiquidName_(ptf.species2LiquidName_),
+    species1GasName_(ptf.species1GasName_),
+    species2GasName_(ptf.species2GasName_),
+    W1_(ptf.W1_),
+    W2_(ptf.W2_)
 {}
 
 
@@ -497,24 +1053,16 @@ void inletOutletBoilerFvPatchScalarField::updateCoeffs()
         return;
     }
 
-    const fvsPatchField<scalar>& phip =
-        patch().lookupPatchField<surfaceScalarField, scalar>(phiName_);
-
-    const wordList patchNames = selectedPatchNames();
-
-    measuredLiquidValue_ = outgoingLiquidMean(patchNames);
-
-    // Total-reflux mass-balance boiler model:
-    // incoming gas composition equals outgoing liquid composition.
-    const scalar target = measuredLiquidValue_;
-
-    const scalar oldValue = oldInletMean(patchNames);
-
-    inletValue_ = clamp((1 - relax_)*oldValue + relax_*target);
-
-    refValue() = inletValue_;
+    // Reservoir is advanced by compositionPredictor AFTER the composition
+    // solve via advanceReservoir(), using post-solve X1.  Here we only set
+    // the BC coefficients from the current (previous-step) reservoir state.
+    refValue() = reservoirInletValue();
     refGrad() = 0;
-    valueFraction() = neg(phip);
+
+    // The BC behaves as inletOutlet for both phases:
+    // phases entering the CFD domain receive the flux-weighted reservoir
+    // composition; phases leaving the CFD domain use zeroGradient.
+    valueFraction() = reservoirInletFraction();
 
     mixedFvPatchScalarField::updateCoeffs();
 }
@@ -523,6 +1071,24 @@ void inletOutletBoilerFvPatchScalarField::updateCoeffs()
 void inletOutletBoilerFvPatchScalarField::write(Ostream& os) const
 {
     fvPatchScalarField::write(os);
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "liquidFlux",
+        "alphaCLPhi1",
+        liquidFluxName_
+    );
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "gasFlux",
+        "alphaCGPhi2",
+        gasFluxName_
+    );
+
+    writeEntryIfDifferent<word>(os, "A12", "A12", A12Name_);
 
     if (!groupName_.empty())
     {
@@ -534,14 +1100,112 @@ void inletOutletBoilerFvPatchScalarField::write(Ostream& os) const
         writeEntry(os, "patches", patchNames_);
     }
 
+    writeEntry(os, "reservoirMoles", reservoirMoles_);
+    writeEntry(os, "reservoirX", reservoirX_);
+    writeEntry(os, "reservoirY", reservoirY_);
+
     writeEntryIfDifferent<scalar>(os, "relax", 1, relax_);
-    writeEntry(os, "inletValue", inletValue_);
-    writeEntry(os, "measuredLiquidValue", measuredLiquidValue_);
     writeEntryIfDifferent<scalar>(os, "minValue", 0, minValue_);
     writeEntryIfDifferent<scalar>(os, "maxValue", 1, maxValue_);
+
+    writeEntryIfDifferent<scalar>
+    (
+        os,
+        "minReservoirMoles",
+        SMALL,
+        minReservoirMoles_
+    );
+
     writeEntryIfDifferent<scalar>(os, "minFlux", VSMALL, minFlux_);
+    writeEntryIfDifferent<Switch>(os, "log", true, log_);
+    writeEntryIfDifferent<Switch>(os, "writeBalance", true, writeBalance_);
+
+    // Restart/diagnostic entries
+    writeEntry(os, "lastA12", lastA12_);
+    writeEntry(os, "lastLiquidToReservoir", lastLiquidToReservoir_);
+    writeEntry(os, "lastGasToReservoir", lastGasToReservoir_);
+    writeEntry(os, "lastLiquidFromReservoir", lastLiquidFromReservoir_);
+    writeEntry(os, "lastGasFromReservoir", lastGasFromReservoir_);
+    writeEntry(os, "lastSpeciesToReservoir", lastSpeciesToReservoir_);
+    writeEntry(os, "lastSpeciesFromReservoir", lastSpeciesFromReservoir_);
+    writeEntry(os, "lastMolesResidual", lastMolesResidual_);
+    writeEntry(os, "lastSpeciesResidual", lastSpeciesResidual_);
+    writeEntry(os, "lastLiquidXToReservoir", lastLiquidXToReservoir_);
+    writeEntry(os, "lastGasXToReservoir", lastGasXToReservoir_);
+
+
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "alphaLiquid",
+        "alpha.liquid",
+        alphaLiquidName_
+    );
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "rhoLiquid",
+        "rho.liquid",
+        rhoLiquidName_
+    );
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "rhoGas",
+        "rho.gas",
+        rhoGasName_
+    );
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "species1Liquid",
+        "cyclohexane.liquid",
+        species1LiquidName_
+    );
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "species2Liquid",
+        "nHeptane.liquid",
+        species2LiquidName_
+    );
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "species1Gas",
+        "cyclohexane.gas",
+        species1GasName_
+    );
+
+    writeEntryIfDifferent<word>
+    (
+        os,
+        "species2Gas",
+        "nHeptane.gas",
+        species2GasName_
+    );
+    writeEntryIfDifferent<Switch>
+    (
+        os,
+        "useRawSpeciesFlux",
+        true,
+        useRawSpeciesFlux_
+    );
+    
+    writeEntryIfDifferent<word>(os, "U", "U", UName_);
+
+    writeEntryIfDifferent<scalar>(os, "W1", 84.16, W1_*1000.0);
+    writeEntryIfDifferent<scalar>(os, "W2", 100.2, W2_*1000.0);
     writeEntry(os, "value", *this);
+
 }
+
 
 void inletOutletBoilerFvPatchScalarField::operator=
 (
@@ -551,7 +1215,7 @@ void inletOutletBoilerFvPatchScalarField::operator=
     fvPatchScalarField::operator=
     (
         valueFraction()*refValue()
-      + (1 - valueFraction())*ptf
+      + (scalar(1) - valueFraction())*ptf
     );
 }
 
@@ -565,3 +1229,5 @@ makePatchTypeField
 } // End namespace Foam
 
 // ************************************************************************* //
+
+

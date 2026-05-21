@@ -47,7 +47,7 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Cell zone where the force is applied
         fvCellZone zone_;
 
-        //- Patch names used for liquid loading measurement and gas control
+        //- Patch names used for measurement and gas control
         wordList patches_;
 
         //- Name of the velocity field
@@ -56,10 +56,10 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Name of liquid volume fraction field. Empty means auto-detect
         word alphaName_;
 
-        //- Optional name of liquid phase flux field. Empty means auto-detect
+        //- Optional name of liquid phase alpha flux field. Empty means auto-detect
         word alphaPhiName_;
 
-        //- Liquid loading measurement mode: directionalAlphaU or alphaPhi
+        //- Liquid/gas flux measurement mode: directionalAlphaU or alphaPhi
         word liquidFluxMode_;
 
         //- Name of mixture volume flux field for alpha*phi fallback
@@ -72,6 +72,19 @@ class totalRefluxPatchGasMeanVelocityForce
         word rhoLiquidFieldName_;
         word rhoGasFieldName_;
 
+        //- If true, target total reflux by total molar flux, not mass flux
+        Switch molarTotalReflux_;
+
+        //- Phase/species fields for molar total reflux closure
+        word species1LiquidName_;
+        word species2LiquidName_;
+        word species1GasName_;
+        word species2GasName_;
+
+        //- Molecular weights [kg/mol] internally. Dict input is kg/kmol.
+        scalar W1_;
+        scalar W2_;
+
         //- Optional explicit phase densities. Negative means not specified
         scalar rhoLiquid_;
         scalar rhoGas_;
@@ -83,14 +96,14 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Fixed gas target direction. Default is upward y: (0 1 0)
         vector gasDirection_;
 
-        //- Time interval for liquid loading averaging [s]. <=0 means instantaneous
+        //- Time interval for total reflux loading averaging [s].
+        //  <=0 means instantaneous
         scalar averagingInterval_;
 
         //- Relaxation factor for the pressure-gradient update
         scalar relaxation_;
 
-        //- Optional lower cutoff for alphaG. Cells with alphaG <= alphaCutoff_
-        //  contribute zero force.
+        //- Optional lower cutoff for alphaG source activation
         scalar alphaCutoff_;
 
         //- Whether to suppress the source below alphaCutoff_
@@ -99,7 +112,7 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Smooth ramp width above alphaCutoff_ for source activation
         scalar alphaRamp_;
 
-        //- For total reflux, use only liquid motion opposite to gasDirection
+        //- For total reflux, downward/outgoing means opposite to gasDirection
         bool counterCurrent_;
 
         //- Optional cap for |targetUbar_|. A negative value disables the cap.
@@ -111,38 +124,106 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Optional cap for |dGradP| per velocity correction. Negative disables.
         scalar maxDeltaPressureGradient_;
 
-        //- Last time-index used for integrating the liquid flux
+        //- Last time-index used for integrating the measured reflux
         mutable label lastIntegratedTimeIndex_;
 
-        //- Accumulated liquid volume over the current averaging window [m3]
-        mutable scalar accumulatedLiquidVolume_;
+        //- Accumulated equivalent target gas volume over averaging window [m3]
+        mutable scalar accumulatedEquivalentGasVolume_;
 
-        //- Accumulated time over the current averaging window [s]
+        //- Accumulated time over averaging window [s]
         mutable scalar accumulatedTime_;
 
-        //- Last measured liquid volume flow rate Q_L [m3/s]
+        //- Last downward liquid volume flow rate [m3/s]
         mutable scalar liquidFlowRate_;
 
-        //- Last selected patch/segment area A_0 [m2]
+        //- Last selected patch/segment area [m2]
         mutable scalar patchArea_;
 
-        //- Last instantaneous liquid loading B_L,inst [m/s]
+        //- Last instantaneous equivalent gas loading [m/s]
         mutable scalar instantLiquidLoading_;
 
-        //- Last filtered liquid loading B_L [m/s]
+        //- Last filtered equivalent gas loading [m/s]
         mutable scalar liquidLoading_;
 
-        //- True after the liquid loading filter has been initialized
+        //- True after filter initialization
         mutable bool liquidLoadingInitialized_;
+
+        //- Total downward mass flow rate [kg/s]
+        mutable scalar totalMassFlowRateDown_;
+
+        //- Downward liquid volume flow rate [m3/s]
+        mutable scalar liquidVolumeFlowRateDown_;
+
+        //- Downward gas volume flow rate [m3/s]
+        mutable scalar gasVolumeFlowRateDown_;
+
+        //- Instantaneous target gas loading [m/s]
+        mutable scalar instantGasLoadingTarget_;
+
+        //- Filtered target gas loading [m/s]
+        mutable scalar gasLoadingTarget_;
+
+        //- Enable time-window mass-balance correction
+        Switch balanceControl_;
+
+        //- Time window for accumulated mass-balance error [s]
+        scalar balanceWindow_;
+
+        //- Absolute mass-flow tolerance for the window-averaged error [kg/s]
+        scalar balanceTolerance_;
+
+        //- Relative tolerance based on max(mDown, mGasUp) [-]
+        scalar balanceRelativeTolerance_;
+
+        //- Integral correction gain for the window error [-]
+        scalar balanceIntegralGain_;
+
+        //- Optional cap for the balance correction loading [m/s]; negative disables
+        scalar maxBalanceCorrection_;
+
+        //- Optional relative cap for balance correction as fraction of
+        //  gasLoadingTarget_. Negative disables. Takes priority over
+        //  maxBalanceCorrection_ when gasLoadingTarget_ > 0.
+        scalar maxBalanceCorrectionFraction_;
+
+        //- Last upward gas mass flow through the measured patch [kg/s]
+        mutable scalar gasMassFlowRateUp_;
+
+        //- Last upward gas volume flow through the measured patch [m3/s]
+        mutable scalar gasVolumeFlowRateUp_;
+
+        //- Last downward total molar flow, from column into apparatus [mol/s]
+        mutable scalar totalMolarFlowRateDown_;
+
+        //- Last upward gas molar flow, from apparatus into column [mol/s]
+        mutable scalar gasMolarFlowRateUp_;
+
+        //- Gas total molar concentration used at the patch [mol/m3]
+        mutable scalar gasMolarConcentrationPatchMean_;
+
+        //- Last balance error rate. If molarTotalReflux=true: mol/s; else kg/s
+        mutable scalar balanceErrorRate_;
+
+        //- Accumulated mass-balance error in the current window [kg]
+        mutable scalar balanceWindowErrorMass_;
+
+        //- Accumulated time in the current balance window [s]
+        mutable scalar balanceWindowTime_;
+
+        //- Superficial gas-loading correction from the balance controller [m/s]
+        mutable scalar balanceCorrectionLoading_;
+
+        //- Last time-index used for the balance-window update
+        mutable label lastBalanceUpdateTimeIndex_;
 
         //- Last computed target superficial gas velocity vector
         mutable vector targetUbar_;
 
-        //- Last phase densities used for the reflux ratio
+        //- Last phase densities used
         mutable scalar rhoLiquidPatchMean_;
         mutable scalar rhoGasPatchMean_;
 
-        //- Text describing the last density source used
+        //- Text describing density source
         mutable word densitySource_;
 
         //- Ignore restart file and start pressure-gradient controller from zero
@@ -172,38 +253,71 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Return selected/autodetected liquid alpha field name
         word actualAlphaName() const;
 
-        //- Return the liquid alpha-flux field name actually used, or word::null
+        //- Return liquid alpha-flux field name actually used, or word::null
         word actualAlphaPhiName(const volScalarField& alpha1) const;
 
-        //- Return a likely gas phase/group name for diagnostics and density fields
+        //- Return gas alpha-flux field name if available, otherwise word::null
+        word actualGasAlphaPhiName(const volScalarField& alpha1) const;
+
+        //- Return a likely gas phase/group name
         word actualGasPhaseName(const volScalarField& alpha1) const;
 
-        //- Write the pressure gradient and loading state to file for restarts
+        //- Write pressure gradient and measured state to uniform dictionary
         void writeProps(const scalar gradP) const;
 
-        //- Gas superficial-flux weighting factor from liquid volume fraction alpha1
+        //- Gas superficial-flux weighting factor from liquid alpha
         scalar gasFluxWeight(const scalar alpha1) const;
 
-        //- Smooth source weighting factor from liquid volume fraction alpha1
+        //- Smooth source weighting factor from liquid alpha
         scalar sourceWeight(const scalar alpha1) const;
 
         //- Smooth source weighting factor for a cell
         scalar sourceWeight(const volScalarField& alpha1, const label celli) const;
 
-        //- Clamp a volume fraction into [0, 1]
+        //- Clamp alpha into [0,1]
         static scalar limitedAlpha(const scalar alpha);
 
-        //- Measure selected-patch signed liquid flow rate and area
-        void measureLiquidFlowRate
+        //- Measure total downward/outgoing mass reflux:
+        //      mDown = rhoL*QLdown + rhoG*QGdown
+        void measureDownwardTotalReflux
         (
             const volVectorField& U,
             const volScalarField& alpha1,
-            scalar& liquidFlowRate,
+            scalar& totalMassFlowDown,
+            scalar& liquidVolumeFlowDown,
+            scalar& gasVolumeFlowDown,
+            scalar& gasVolumeFlowUp,
             scalar& patchArea
         ) const;
 
-        //- Update the liquid-loading average according to formula 4.26/4.27
-        void updateLiquidLoading
+        //- True if all fields needed for molar reflux closure exist
+        bool molarFluxFieldsAvailable() const;
+
+        //- Measure patch-normal molar total reflux using exactly U&Sf, alpha, rho, Y, W.
+        //  Positive U&Sf leaves the CFD domain into the apparatus.
+        //  The upward gas return from apparatus into the CFD domain is negative gas flux.
+        void measureDownwardTotalRefluxMolar
+        (
+            const volVectorField& U,
+            const volScalarField& alpha1,
+            scalar& totalMolarFlowDown,
+            scalar& gasMolarFlowUp,
+            scalar& liquidVolumeFlowDown,
+            scalar& gasVolumeFlowDown,
+            scalar& gasVolumeFlowUp,
+            scalar& gasMolarConcentration,
+            scalar& patchArea
+        ) const;
+
+        //- Update the time-window integral balance controller
+        void updateBalanceController
+        (
+            const volVectorField& U,
+            const volScalarField& alpha1
+        ) const;
+
+        //- Update target gas loading from measured total downward mass flow
+        void updateTotalRefluxLoading
         (
             const volVectorField& U,
             const volScalarField& alpha1
@@ -212,14 +326,14 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Compute phase densities from constants, phase fields or mixture rho
         void updateDensities(const volScalarField& alpha1) const;
 
-        //- Compute the total-reflux gas target from averaged liquid loading
+        //- Compute target gas velocity
         void updateTarget
         (
             const volVectorField& U,
             const volScalarField& alpha1
         ) const;
 
-        //- Calculate the current patch superficial gas velocity in target direction
+        //- Current patch superficial gas velocity in target direction
         scalar patchGasUbarAve
         (
             const volVectorField& U,
@@ -233,7 +347,7 @@ class totalRefluxPatchGasMeanVelocityForce
             const volScalarField& alpha1
         ) const;
 
-        //- Zone fallback response d(jG)/d(gradP), used if patch response is zero
+        //- Zone fallback response d(jG)/d(gradP)
         scalar zoneResponseAve
         (
             const volScalarField& rA,

@@ -15,5 +15,7 @@ wmake $targetType Utilities/incompressibleVoFCyclic
 wmake $targetType Utilities/setHoldup
 wmake $targetType Utilities/prghNonConformalCyclicPressureFvPatchScalarField
 wmake $targetType Utilities/setComposition
+wmake $targetType Utilities/rectificationCompositionBCs
 wmake $targetType Utilities/totalRefluxPatchGasMeanVelocityForce
+wmake $targetType Utilities/reservoirFenske
 #------------------------------------------------------------------------------

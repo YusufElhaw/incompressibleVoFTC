@@ -12,7 +12,7 @@ nHeptane.X
 Available types:
 
 ```foam
-inletOutletCondensator
+inletOutletCondenser
 inletOutletBoiler
 ```
 
@@ -95,7 +95,7 @@ OpenFOAM's usual sign convention is used: positive boundary flux leaves the CFD 
 
 ## Condensator
 
-The `inletOutletCondensator` condition represents a total-reflux condenser.
+The `inletOutletCondenser` condition represents a total-reflux condenser.
 
 Physical meaning:
 
@@ -150,7 +150,7 @@ Minimal example:
 ```foam
 top
 {
-    type        inletOutletCondensator;
+    type        inletOutletCondenser;
     value       uniform 0;
 }
 ```
@@ -160,14 +160,14 @@ Recommended multi-patch example:
 ```foam
 top1
 {
-    type        inletOutletCondensator;
+    type        inletOutletCondenser;
     group       topCondensator;
     value       uniform 0;
 }
 
 top2
 {
-    type        inletOutletCondensator;
+    type        inletOutletCondenser;
     group       topCondensator;
     value       uniform 0;
 }
@@ -294,7 +294,7 @@ Instead of `group`, an explicit patch list can be used:
 ```foam
 top1
 {
-    type        inletOutletCondensator;
+    type        inletOutletCondenser;
     patches     (top1 top2 top3);
     value       uniform 0;
 }

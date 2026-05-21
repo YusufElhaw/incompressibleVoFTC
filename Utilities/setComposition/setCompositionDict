@@ -1,0 +1,348 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM                                        |
+|  \\    /   O peration     | setCompositionDict                              |
+|   \\  /    A nd           | Example for incompressibleVoFTC                 |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    object      setCompositionDict;
+}
+
+// ************************************************************************* //
+
+
+// ========================================================================== //
+// 1. Optional: phase order
+// ========================================================================== //
+
+// Optional.
+// If omitted, phases are read from constant/phaseProperties.
+// phase1 is still detected from the existing alpha.<phase> field.
+phases
+(
+    liquid
+    gas
+);
+
+
+// ========================================================================== //
+// 2. Initial mole fractions in both phases
+// ========================================================================== //
+
+// Species names must match the species list in constant/physicalProperties.<phase>.
+// Usually species1 is the light key, here cyclohexane.
+
+cyclohexane
+{
+    // Liquid initial mole fraction x_cyclohexane,liquid
+    liquid      0.5;
+
+    // Gas initial mole fraction y_cyclohexane,gas
+    gas         0.5;
+}
+
+nHeptane
+{
+    // Optional if cyclohexane is given.
+    // setComposition can infer this as 1 - cyclohexane.
+    liquid      0.5;
+    gas         0.5;
+}
+
+
+// ========================================================================== //
+// 3. Optional molecular-weight fallback
+// ========================================================================== //
+
+// Normally molWeight is read from constant/physicalProperties.<phase>.
+// This fallback is only needed if molWeight is not found there.
+
+molecularWeights
+{
+    cyclohexane  84.16;   // kg/kmol
+    nHeptane     100.2;   // kg/kmol
+}
+
+
+// ========================================================================== //
+// 4. Alpha / interface weighting
+// ========================================================================== //
+
+// Used to decide pure liquid / pure gas / interface cells.
+alphaTol        1e-4;
+
+// For mixed cells, setComposition writes X with alpha*C weighting:
+//
+// X = (alpha_liq*C_liq*x_liq + alpha_gas*C_gas*y_gas)
+//     /(alpha_liq*C_liq + alpha_gas*C_gas)
+//
+// For incompressible phases: C = rho/Mmix.
+// For perfectGas phases: C = p/(R*T).
+
+
+// ========================================================================== //
+// 5. Pressure / temperature for perfectGas phase
+// ========================================================================== //
+
+// Used only if one phase has equationOfState perfectGas.
+// Candidate search still falls back to p_rgh, p_rgh.orig, p, p.orig,
+// and T, T.orig, but these entries define the preferred names.
+
+pressureField       p_rgh;
+temperatureField    T;
+
+// If p_rgh is relative/gauge pressure, add an absolute pressure offset.
+// Can be global:
+pressureOffset      101325;
+
+// Or phase-specific instead:
+//
+// pressureOffset
+// {
+//     gas     101325;
+//     liquid  0;
+// }
+
+// OpenFOAM molWeight is kg/kmol, so this R is J/(kmol K).
+universalGasConstant  8314.46261815324;
+
+
+// ========================================================================== //
+// 6. Standard inletOutlet patches
+// ========================================================================== //
+
+// These are normal OpenFOAM inletOutlet patches for X.
+// Do NOT include condenser/boiler patches here.
+// A patch may only appear in one list.
+
+inletOutletPatches
+(
+    // inlet_1
+    // inlet_2
+);
+
+// Flux for normal inletOutlet only.
+// Dynamic condenser/boiler BCs use alphaCLPhi1 / alphaCGPhi2 internally.
+phi             phi;
+
+// Default inlet phase for normal inletOutlet patches.
+// This controls the inletValue written for normal inletOutlet patches.
+defaultInletPhase liquid;
+
+// Optional per-patch inlet phase override.
+// Useful if some normal inletOutlet patches are gas inlets.
+patchInletPhases
+{
+    // inlet_1 liquid;
+    // inlet_2 gas;
+}
+
+
+// ========================================================================== //
+// 7. Fixed-value patches
+// ========================================================================== //
+
+// These receive a fixedValue composition based on defaultInletPhase or
+// patchInletPhases.
+
+fixedValuePatches
+(
+    // fixed_inlet
+);
+
+
+// ========================================================================== //
+// 8. Forced zeroGradient patches
+// ========================================================================== //
+
+zeroGradientPatches
+(
+    // outlet
+);
+
+
+// ========================================================================== //
+// 9. Dynamic condenser patches
+// ========================================================================== //
+
+// These patches will receive:
+//
+// type        inletOutletCondenser;
+// group       topCondenser;
+//
+// Only the solved light-key field species1.X gets this BC.
+// species2.X and phase mass-fraction fields remain calculated.
+
+condenserPatches
+(
+    bottom_Top_on_top
+
+    // For many top patches connected to the same condenser:
+    // top_01
+    // top_02
+    // top_03
+    // top_04
+);
+
+// Runtime BC type written by setComposition.
+condenserPatchType  inletOutletCondenser;
+
+// Group name written into every condenser patch.
+// The BC uses this group to collect all condenser patches belonging
+// to the same apparatus.
+condenserGroup      topCondenser;
+
+// Initial condenser holdup [mol].
+// Use ONE of the two approaches:
+//
+//   Option A: explicit moles (takes priority over Option B)
+condenserReservoirMoles  1e-3;
+//
+//   Option B: fraction of the total column molar content.
+//   contentReservoirToColumnCondenser 1.0;   // = same as column
+//   contentReservoirToColumnCondenser 0.5;   // = half the column
+//
+// If neither condenserReservoirMoles nor contentReservoirToColumnCondenser
+// is given, the shared contentReservoirToColumn (section 11) is used.
+// If that is also absent, reservoirMoles (section 11) is the final fallback.
+
+// Initial condenser liquid/reflux composition x_D.
+condenserReservoirX      0.5;
+
+// Under-relaxation of condenser reservoir update.
+// 1 = physical explicit Euler.
+// <1 = numerical damping.
+condenserRelax           1;
+
+// For a total condenser, usually false is cleaner:
+// incoming liquid from condenser gets x_D,
+// accidental incoming gas does not receive condenser value.
+condenserApplyToGasInlet false;
+
+// Optional explicit flux names.
+// If omitted, the BC defaults are:
+// liquidFlux alphaCLPhi1;
+// gasFlux    alphaCGPhi2;
+//
+// condenserLiquidFlux      alphaCLPhi1;
+// condenserGasFlux         alphaCGPhi2;
+
+
+// ========================================================================== //
+// 10. Dynamic boiler / reboiler patches
+// ========================================================================== //
+
+// These patches will receive:
+//
+// type        inletOutletBoiler;
+// group       bottomBoiler;
+//
+// Only the solved light-key field species1.X gets this BC.
+// species2.X and phase mass-fraction fields remain calculated.
+
+boilerPatches
+(
+    bottom_Top_on_bottom
+
+    // For many bottom patches connected to the same boiler:
+    // bottom_01
+    // bottom_02
+    // bottom_03
+    // bottom_04
+);
+
+// Runtime BC type written by setComposition.
+boilerPatchType     inletOutletBoiler;
+
+// Group name written into every boiler patch.
+// The BC uses this group to collect all boiler patches belonging
+// to the same apparatus.
+boilerGroup         bottomBoiler;
+
+// Initial boiler liquid holdup [mol].
+// Use ONE of the two approaches:
+//
+//   Option A: explicit moles (takes priority over Option B)
+boilerReservoirMoles     1e-3;
+//
+//   Option B: fraction of the total column molar content.
+//   contentReservoirToColumnBoiler 1.0;   // = same as column
+//   contentReservoirToColumnBoiler 0.5;   // = half the column
+//
+// If neither boilerReservoirMoles nor contentReservoirToColumnBoiler
+// is given, the shared contentReservoirToColumn (section 11) is used.
+// If that is also absent, reservoirMoles (section 11) is the final fallback.
+
+// Initial boiler liquid composition x_B.
+boilerReservoirX         0.5;
+
+// Under-relaxation of boiler reservoir update.
+// 1 = physical explicit Euler.
+// <1 = numerical damping.
+boilerRelax              1;
+
+// Optional explicit field names.
+// If omitted, the BC defaults are:
+// liquidFlux alphaCLPhi1;
+// gasFlux    alphaCGPhi2;
+// A12         A12;
+//
+// boilerLiquidFlux       alphaCLPhi1;
+// boilerGasFlux          alphaCGPhi2;
+// boilerA12              A12;
+
+
+// ========================================================================== //
+// 11. Shared dynamic-BC fallback values
+// ========================================================================== //
+
+// These are used as fallback values if the corresponding condenser*/boiler*
+// entries are not present.
+
+reservoirMoles      1e-3;
+reservoirX          0.5;
+
+// Shared column-content factor (used when the apparatus-specific
+// condenserReservoirMoles / boilerReservoirMoles and the apparatus-specific
+// contentReservoirToColumnCondenser / contentReservoirToColumnBoiler are
+// both absent).  Priority order per apparatus:
+//
+//   1. condenserReservoirMoles / boilerReservoirMoles   (explicit, wins)
+//   2. contentReservoirToColumnCondenser / ...Boiler    (per-apparatus factor)
+//   3. contentReservoirToColumn                         (shared factor, below)
+//   4. reservoirMoles                                   (this section fallback)
+//
+// N_column = sum over all cells of (alpha_L*C_L + alpha_G*C_G)*V_cell
+// reservoirMoles = contentReservoirToColumn * N_column
+//
+// contentReservoirToColumn 1;   // both reservoirs = full column content
+// contentReservoirToColumn 0.5; // both reservoirs = half column content
+
+relax               1;
+
+minValue            0;
+maxValue            1;
+
+minReservoirMoles   1e-30;
+minFlux             1e-30;
+
+log                 true;
+
+
+// ========================================================================== //
+// 12. Default patch type
+// ========================================================================== //
+
+// Used for unconstrained patches that are not listed above.
+// Constraint patches such as empty, cyclic, processor, symmetry, wedge,
+// nonConformalError keep their required constraint type automatically.
+
+defaultPatchType    zeroGradient;
+
+
+// ************************************************************************* //

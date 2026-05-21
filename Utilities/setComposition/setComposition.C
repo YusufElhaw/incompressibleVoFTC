@@ -155,7 +155,7 @@ void checkPatchListConflicts
     listNames[0] = "inletOutletPatches";
     listNames[1] = "fixedValuePatches";
     listNames[2] = "zeroGradientPatches";
-    listNames[3] = "condensatorPatches";
+    listNames[3] = "condenserPatches";
     listNames[4] = "boilerPatches";
 
     PtrList<wordList> lists(listNames.size());
@@ -1626,21 +1626,21 @@ word patchScalarType
         return "calculated";
     }
 
-    // Condensator / boiler are only meaningful for the solved mole-fraction
+    // Condenser / boiler are only meaningful for the solved mole-fraction
     // field of the light-boiling component, species1.X.
     if (!massFraction && fieldSpecies == c.species1)
     {
-        wordList condensatorPatches;
-        if (dict.found("condensatorPatches"))
+        wordList condenserPatches;
+        if (dict.found("condenserPatches"))
         {
-            dict.lookup("condensatorPatches") >> condensatorPatches;
+            dict.lookup("condenserPatches") >> condenserPatches;
 
-            if (containsWord(condensatorPatches, patchName))
+            if (containsWord(condenserPatches, patchName))
             {
                 return dict.lookupOrDefault
                 (
-                    "condensatorPatchType",
-                    word("inletOutletCondensator")
+                    "condenserPatchType",
+                    word("inletOutletCondenser")
                 );
             }
         }
@@ -1760,11 +1760,11 @@ void writeScalarFieldFile
 
     const word phiName = dict.lookupOrDefault<word>("phi", word("phi"));
     
-    const word condensatorPatchType =
+    const word condenserPatchType =
         dict.lookupOrDefault
         (
-            "condensatorPatchType",
-            word("inletOutletCondensator")
+            "condenserPatchType",
+            word("inletOutletCondenser")
         );
 
     const word boilerPatchType =
@@ -1774,11 +1774,11 @@ void writeScalarFieldFile
             word("inletOutletBoiler")
         );
 
-    
     const word boilerGroup =
         dict.lookupOrDefault("boilerGroup", word("bottomBoiler"));
-    const word condensatorGroup =
-        dict.lookupOrDefault("condensatorGroup", word("topCondensator"));
+
+    const word condenserGroup =
+        dict.lookupOrDefault("condenserGroup", word("topCondenser"));
 
 
     forAll(mesh.boundary(), patchi)
@@ -1842,9 +1842,64 @@ void writeScalarFieldFile
                 os  << "        value       uniform " << inletVal << ";" << nl;
             }
         }
-        else if (patchType == condensatorPatchType)
+        else if (patchType == condenserPatchType)
         {
-            os  << "        group       " << condensatorGroup << ";" << nl;
+            os  << "        group       " << condenserGroup << ";" << nl
+                << "        reservoirMoles      "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "condenserReservoirMoles",
+                       dict.lookupOrDefault<scalar>("reservoirMoles", 1)
+                   )
+                << ";" << nl
+                << "        reservoirX          "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "condenserReservoirX",
+                       dict.lookupOrDefault<scalar>("reservoirX", 0.5)
+                   )
+                << ";" << nl
+                << "        relax               "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "condenserRelax",
+                       dict.lookupOrDefault<scalar>("relax", 1)
+                   )
+                << ";" << nl
+                << "        applyToGasInlet     "
+                << dict.lookupOrDefault<Switch>
+                   (
+                       "condenserApplyToGasInlet",
+                       dict.lookupOrDefault<Switch>("applyToGasInlet", true)
+                   )
+                << ";" << nl
+                << "        minValue            "
+                << dict.lookupOrDefault<scalar>("minValue", 0)
+                << ";" << nl
+                << "        maxValue            "
+                << dict.lookupOrDefault<scalar>("maxValue", 1)
+                << ";" << nl
+                << "        minReservoirMoles   "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "condenserMinReservoirMoles",
+                       dict.lookupOrDefault<scalar>("minReservoirMoles", SMALL)
+                   )
+                << ";" << nl
+                << "        minFlux             "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "condenserMinFlux",
+                       dict.lookupOrDefault<scalar>("minFlux", VSMALL)
+                   )
+                << ";" << nl
+                << "        log                 "
+                << dict.lookupOrDefault<Switch>
+                   (
+                       "condenserLog",
+                       dict.lookupOrDefault<Switch>("log", true)
+                   )
+                << ";" << nl;
 
             if (boundaryValuesPtr)
             {
@@ -1864,12 +1919,60 @@ void writeScalarFieldFile
             }
             else
             {
-                os  << "        value       uniform 0;" << nl;
+                os  << "        value       uniform 0.5;" << nl;
             }
         }
         else if (patchType == boilerPatchType)
         {
-            os  << "        group       " << boilerGroup << ";" << nl;
+            os  << "        group       " << boilerGroup << ";" << nl
+                << "        reservoirMoles      "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "boilerReservoirMoles",
+                       dict.lookupOrDefault<scalar>("reservoirMoles", 1)
+                   )
+                << ";" << nl
+                << "        reservoirX          "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "boilerReservoirX",
+                       dict.lookupOrDefault<scalar>("reservoirX", 0.5)
+                   )
+                << ";" << nl
+                << "        relax               "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "boilerRelax",
+                       dict.lookupOrDefault<scalar>("relax", 1)
+                   )
+                << ";" << nl
+                << "        minValue            "
+                << dict.lookupOrDefault<scalar>("minValue", 0)
+                << ";" << nl
+                << "        maxValue            "
+                << dict.lookupOrDefault<scalar>("maxValue", 1)
+                << ";" << nl
+                << "        minReservoirMoles   "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "boilerMinReservoirMoles",
+                       dict.lookupOrDefault<scalar>("minReservoirMoles", SMALL)
+                   )
+                << ";" << nl
+                << "        minFlux             "
+                << dict.lookupOrDefault<scalar>
+                   (
+                       "boilerMinFlux",
+                       dict.lookupOrDefault<scalar>("minFlux", VSMALL)
+                   )
+                << ";" << nl
+                << "        log                 "
+                << dict.lookupOrDefault<Switch>
+                   (
+                       "boilerLog",
+                       dict.lookupOrDefault<Switch>("log", true)
+                   )
+                << ";" << nl;
 
             if (boundaryValuesPtr)
             {
@@ -1889,7 +1992,7 @@ void writeScalarFieldFile
             }
             else
             {
-                os  << "        value       uniform 0;" << nl;
+                os  << "        value       uniform 0.5;" << nl;
             }
         }
         else if (patchType == "calculated")
@@ -1984,6 +2087,72 @@ void writeScalarFieldFile
         << "// ************************************************************************* //" << nl;
 
     Info<< "Written field: " << io.objectPath(false) << nl;
+}
+
+// Compute total column molar content [mol]:
+//   N = sum_cells [ (alpha_L * C_L + alpha_G * C_G) * V_cell ]
+// C_L, C_G come from phaseMolarConcentration() in [kmol/m³] because
+// molWeight is stored in kg/kmol throughout. The BC however stores
+// reservoirMoles in [mol] (it divides the input W by 1000 internally).
+// Multiply by 1000 to convert kmol → mol for consistency with the BC.
+scalar computeColumnMoles
+(
+    const fvMesh& mesh,
+    const scalarField& alpha,
+    const scalarField& CPhase1,
+    const scalarField& CPhase2
+)
+{
+    const scalarField& vols = mesh.V();
+    scalar N = 0;
+
+    forAll(alpha, celli)
+    {
+        const scalar ac = min(max(alpha[celli], scalar(0)), scalar(1));
+        N += (ac*CPhase1[celli] + (1 - ac)*CPhase2[celli]) * vols[celli];
+    }
+
+    reduce(N, sumOp<scalar>());
+    return N * scalar(1000);   // kmol → mol (BC reservoirMoles unit)
+}
+
+// Resolve final reservoir moles for one apparatus (condenser or boiler).
+// Priority order:
+//   1. directKey          (e.g. condenserReservoirMoles)  — explicit, wins
+//   2. specificFactorKey  (e.g. contentReservoirToColumnCondenser) — apparatus factor
+//   3. sharedFactorKey    (contentReservoirToColumn)       — shared column factor
+//   4. "reservoirMoles"   fallback, then 1.0
+scalar resolveApparatusReservoirMoles
+(
+    const dictionary& dict,
+    const word& directKey,
+    const word& specificFactorKey,
+    const word& sharedFactorKey,
+    const scalar N_column
+)
+{
+    if (dict.found(directKey))
+    {
+        return readScalar(dict.lookup(directKey));
+    }
+
+    scalar f = -1;
+
+    if (dict.found(specificFactorKey))
+    {
+        f = readScalar(dict.lookup(specificFactorKey));
+    }
+    else if (dict.found(sharedFactorKey))
+    {
+        f = readScalar(dict.lookup(sharedFactorKey));
+    }
+
+    if (f >= 0)
+    {
+        return f * N_column;
+    }
+
+    return dict.lookupOrDefault<scalar>("reservoirMoles", 1.0);
 }
 
 } // End namespace setCompositionTools
@@ -2160,12 +2329,66 @@ int main(int argc, char *argv[])
         X2Boundary
     );
 
+    // Build a working copy of the dict with reservoir moles pre-resolved.
+    // If contentReservoirToColumn* keys are present, compute N_column once
+    // and inject the resolved moles so writeScalarFieldFile finds them directly.
+    dictionary workDict(setCompositionDict);
+
+    {
+        const bool hasShared =
+            setCompositionDict.found("contentReservoirToColumn");
+        const bool hasCondenser =
+            setCompositionDict.found("contentReservoirToColumnCondenser");
+        const bool hasBoiler =
+            setCompositionDict.found("contentReservoirToColumnBoiler");
+
+        if (hasShared || hasCondenser || hasBoiler)
+        {
+            const scalar N_column =
+                computeColumnMoles(mesh, a, CPhase1, CPhase2);
+
+            Info<< "Column total moles N_column = " << N_column
+                << " mol [converted from kmol via ×1000, consistent with BC reservoirMoles]"
+                << nl;
+
+            if (!workDict.found("condenserReservoirMoles"))
+            {
+                const scalar moles = resolveApparatusReservoirMoles
+                (
+                    workDict,
+                    "condenserReservoirMoles",
+                    "contentReservoirToColumnCondenser",
+                    "contentReservoirToColumn",
+                    N_column
+                );
+                workDict.set("condenserReservoirMoles", moles);
+                Info<< "condenserReservoirMoles resolved to " << moles
+                    << " mol from column content" << nl;
+            }
+
+            if (!workDict.found("boilerReservoirMoles"))
+            {
+                const scalar moles = resolveApparatusReservoirMoles
+                (
+                    workDict,
+                    "boilerReservoirMoles",
+                    "contentReservoirToColumnBoiler",
+                    "contentReservoirToColumn",
+                    N_column
+                );
+                workDict.set("boilerReservoirMoles", moles);
+                Info<< "boilerReservoirMoles resolved to " << moles
+                    << " mol from column content" << nl;
+            }
+        }
+    }
+
     writeScalarFieldFile
     (
         mesh,
         runTime,
         alpha,
-        setCompositionDict,
+        workDict,
         c.species1 + ".X",
         X1,
         c.species1,
@@ -2180,7 +2403,7 @@ int main(int argc, char *argv[])
         mesh,
         runTime,
         alpha,
-        setCompositionDict,
+        workDict,
         c.species2 + ".X",
         X2,
         c.species2,
@@ -2195,7 +2418,7 @@ int main(int argc, char *argv[])
         mesh,
         runTime,
         alpha,
-        setCompositionDict,
+        workDict,
         c.species1 + "." + c.phase1,
         Y1Phase1,
         c.species1,
@@ -2210,7 +2433,7 @@ int main(int argc, char *argv[])
         mesh,
         runTime,
         alpha,
-        setCompositionDict,
+        workDict,
         c.species2 + "." + c.phase1,
         Y2Phase1,
         c.species2,
@@ -2225,7 +2448,7 @@ int main(int argc, char *argv[])
         mesh,
         runTime,
         alpha,
-        setCompositionDict,
+        workDict,
         c.species1 + "." + c.phase2,
         Y1Phase2,
         c.species1,
@@ -2240,7 +2463,7 @@ int main(int argc, char *argv[])
         mesh,
         runTime,
         alpha,
-        setCompositionDict,
+        workDict,
         c.species2 + "." + c.phase2,
         Y2Phase2,
         c.species2,
