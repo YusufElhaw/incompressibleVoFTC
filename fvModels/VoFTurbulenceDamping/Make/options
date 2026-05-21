@@ -3,8 +3,10 @@ EXE_INC = \
     -I$(FOAM_MODULES)/twoPhaseSolver/lnInclude \
     -I$(FOAM_MODULES)/VoFSolver/lnInclude \
     -I$(FOAM_RUN)/meineSolvers/incompressibleVoFTC/lnInclude \
-#    -I$(FOAM_MODULES)/incompressibleVoF/lnInclude \#
     -I$(LIB_SRC)/physicalProperties/lnInclude \
+    -I$(LIB_SRC)/thermophysicalModels/basic/lnInclude \
+    -I$(LIB_SRC)/thermophysicalModels/multicomponentThermo/lnInclude \
+    -I$(LIB_SRC)/thermophysicalModels/specie/lnInclude \
     -I$(LIB_SRC)/twoPhaseModels/twoPhaseMixture/lnInclude \
     -I$(LIB_SRC)/twoPhaseModels/incompressibleTwoPhases/lnInclude \
     -I$(LIB_SRC)/MomentumTransportModels/momentumTransportModels/lnInclude \

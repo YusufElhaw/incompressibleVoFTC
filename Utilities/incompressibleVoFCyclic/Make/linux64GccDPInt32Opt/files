@@ -1,0 +1,5 @@
+SOURCE += incompressibleVoFCyclic.C
+SOURCE += momentumPredictor.C
+SOURCE += pressureCorrector.C
+
+LIB = $(FOAM_USER_LIBBIN)/libincompressibleVoFCyclic

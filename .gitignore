@@ -1,4 +1,4 @@
-fvModels/
+*32Opt
 Make/linux*/
 *.dep
 *.o

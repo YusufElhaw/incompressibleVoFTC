@@ -24,7 +24,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "VoFTurbulenceDamping.H"
-#include "incompressibleTwoPhaseVoFMixtureT.H"
+#include "incompressibleTwoPhaseVoFMixtureTC.H"
 #include "incompressibleMomentumTransportModel.H"
 #include "fvMatrix.H"
 #include "addToRunTimeSelectionTable.H"
@@ -62,7 +62,7 @@ Foam::fv::VoFTurbulenceDamping::VoFTurbulenceDamping
     delta_("delta", dimLength, dict),
     mixture_
     (
-        mesh.lookupObject<incompressibleTwoPhaseVoFMixtureT>
+        mesh.lookupObject<incompressibleTwoPhaseVoFMixtureTC>
         (
             "phaseProperties"
         )

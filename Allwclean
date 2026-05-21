@@ -13,5 +13,7 @@ wclean libso Utilities/incompressibleVoFCyclic
 wclean libso Utilities/setHoldup
 wclean libso Utilities/prghNonConformalCyclicPressureFvPatchScalarField
 wclean libso Utilities/setComposition
+wclean libso Utilities/rectificationCompositionBCs
 wclean libso Utilities/totalRefluxPatchGasMeanVelocityForce
+wclean libso Utilities/reservoirFenske
 #------------------------------------------------------------------------------

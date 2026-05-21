@@ -25,7 +25,7 @@ License
 
 #include "VoFCavitation.H"
 #include "VoFSolver.H"
-#include "incompressibleTwoPhaseVoFMixtureT.H"
+#include "incompressibleTwoPhaseVoFMixtureTC.H"
 #include "fvcDdt.H"
 #include "fvcDiv.H"
 #include "fvmSup.H"
@@ -63,7 +63,7 @@ Foam::fv::VoFCavitation::VoFCavitation
 
     mixture_
     (
-        mesh.lookupObjectRef<incompressibleTwoPhaseVoFMixtureT>
+        mesh.lookupObjectRef<incompressibleTwoPhaseVoFMixtureTC>
         (
             "phaseProperties"
         )
@@ -106,7 +106,7 @@ void Foam::fv::VoFCavitation::addSup
         const volScalarField& alpha2 = mixture_.alpha2();
 
         const dimensionedScalar& rho =
-            &alpha == &alpha1 ? mixture_.thermo1().rho() : mixture_.thermo2().rho();
+            &alpha == &alpha1 ? mixture_.rho1() : mixture_.rho2();
 
         const scalar s = &alpha == &alpha1 ? +1 : -1;
 
