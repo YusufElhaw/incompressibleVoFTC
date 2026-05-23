@@ -457,7 +457,7 @@ bool Foam::functionObjects::reservoirFenske::execute()
     if (Pstream::master())
     {
         const fileName dir =
-            mesh().time().path()
+            mesh().time().globalPath()
            /"postProcessing"
            /name()
            /"0";
@@ -509,6 +509,9 @@ bool Foam::functionObjects::reservoirFenske::execute()
         << ", dN1=" << dN1
         << ", dN2=" << dN2
         << ", relN=" << relN
+        << ", N1col=" << N1Column
+        << ", N1top=" << N1Top
+        << ", N1bot=" << N1Bottom
         << ", A12geo=";
 
     if (validA12)  { Info << A12ColumnGeo;  }

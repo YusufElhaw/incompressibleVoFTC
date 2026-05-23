@@ -10,6 +10,8 @@
 #include "typeInfo.H"
 #include <fstream>
 #include "OSspecific.H"
+#include "nonConformalProcessorCyclicFvPatch.H"
+#include "HashSet.H"
 
 namespace Foam
 {
@@ -95,9 +97,31 @@ scalar inletOutletCondenserFvPatchScalarField::meanA12
     scalar sumA = 0;
     scalar sumA12A = 0;
 
-    forAll(patchNames, patchNamei)
+    // In parallel, original NCC patches have size=0; actual faces are on
+    // nonConformalProcessorCyclic patches. Include both in the measurement.
+    DynamicList<label> measureIDs(patchNames.size());
     {
-        const label patchi = patchID(patchNames[patchNamei]);
+        forAll(patchNames, i) measureIDs.append(patchID(patchNames[i]));
+        if (Pstream::parRun())
+        {
+            const wordHashSet nameSet(patchNames);
+            const fvBoundaryMesh& bm = patch().boundaryMesh();
+            forAll(bm, pi)
+            {
+                if (!isA<nonConformalProcessorCyclicFvPatch>(bm[pi])) continue;
+                const auto& ncpc =
+                    refCast<const nonConformalProcessorCyclicFvPatch>(bm[pi]);
+                if (nameSet.found(
+                        ncpc.nonConformalProcessorCyclicPatch()
+                            .referPatch().name()))
+                    measureIDs.append(pi);
+            }
+        }
+    }
+
+    forAll(measureIDs, _i)
+    {
+        const label patchi = measureIDs[_i];
 
         const scalarField& magSf = mesh.boundary()[patchi].magSf();
         const fvPatchScalarField& A12p = A12.boundaryField()[patchi];
@@ -115,9 +139,10 @@ scalar inletOutletCondenserFvPatchScalarField::meanA12
 
     if (sumA <= SMALL)
     {
-        FatalErrorInFunction
-            << "Patch area is zero while computing mean A12."
-            << exit(FatalError);
+        // NCC patch area is 0 until stitcher_->connect() runs in the first
+        // PIMPLE iteration. Return neutral A12 = 1 (no VLE selectivity) as
+        // startup default; correct value is used from the next iteration on.
+        return scalar(1);
     }
 
     return max(sumA12A/sumA, SMALL);
@@ -283,9 +308,30 @@ void inletOutletCondenserFvPatchScalarField::measureCompositionPredictorFluxes
     n1LfromReservoir = 0;
     n1GfromReservoir = 0;
 
-    forAll(patchNames, patchNamei)
+    // In parallel, original NCC patches have size=0; include procBoundary patches.
+    DynamicList<label> measureIDs(patchNames.size());
     {
-        const label patchi = patchID(patchNames[patchNamei]);
+        forAll(patchNames, i) measureIDs.append(patchID(patchNames[i]));
+        if (Pstream::parRun())
+        {
+            const wordHashSet nameSet(patchNames);
+            const fvBoundaryMesh& bm = patch().boundaryMesh();
+            forAll(bm, pi)
+            {
+                if (!isA<nonConformalProcessorCyclicFvPatch>(bm[pi])) continue;
+                const auto& ncpc =
+                    refCast<const nonConformalProcessorCyclicFvPatch>(bm[pi]);
+                if (nameSet.found(
+                        ncpc.nonConformalProcessorCyclicPatch()
+                            .referPatch().name()))
+                    measureIDs.append(pi);
+            }
+        }
+    }
+
+    forAll(measureIDs, _i)
+    {
+        const label patchi = measureIDs[_i];
 
         const fvsPatchScalarField& Lp =
             liquidFlux.boundaryField()[patchi];
@@ -298,13 +344,22 @@ void inletOutletCondenserFvPatchScalarField::measureCompositionPredictorFluxes
             X.boundaryField()[patchi].patchInternalField()
         );
 
+        // Condenser NCPC patches are on the NEIGHBOUR side of the NCC cyclic
+        // pair. Their boundary flux convention is sign-inverted relative to
+        // the physical patch: phi>0 means inflow (from condenser), phi<0 means
+        // outflow (to condenser). Invert the sign so that Lto/Gto/Lfrom/Gfrom
+        // keep their physical meaning: "to" = leaving column, "from" = entering.
+        const bool ncpc =
+            isA<nonConformalProcessorCyclicFvPatch>(mesh.boundary()[patchi]);
+        const scalar sgn = ncpc ? scalar(-1) : scalar(1);
+
         forAll(Lp, facei)
         {
-            const scalar Lto = max( Lp[facei], scalar(0));
-            const scalar Gto = max( Gp[facei], scalar(0));
+            const scalar Lto = max( sgn*Lp[facei], scalar(0));
+            const scalar Gto = max( sgn*Gp[facei], scalar(0));
 
-            const scalar Lfrom = max(-Lp[facei], scalar(0));
-            const scalar Gfrom = max(-Gp[facei], scalar(0));
+            const scalar Lfrom = max(-sgn*Lp[facei], scalar(0));
+            const scalar Gfrom = max(-sgn*Gp[facei], scalar(0));
 
             const scalar xOut = clamp(xPatchInternal[facei]);
 
@@ -745,6 +800,91 @@ inletOutletCondenserFvPatchScalarField::reservoirInletFraction() const
 
     return tfrac;
 }
+
+
+void inletOutletCondenserFvPatchScalarField::correctReservoir
+(
+    const scalar deltaN,
+    const scalar deltaN1
+)
+{
+    const scalar N1old = reservoirMoles_ * reservoirX_;
+    reservoirMoles_ = max(reservoirMoles_ + deltaN, minReservoirMoles_);
+    if (reservoirMoles_ > SMALL)
+    {
+        reservoirX_ = clamp((N1old + deltaN1) / reservoirMoles_);
+    }
+}
+
+
+void inletOutletCondenserFvPatchScalarField::applyInletValuesOnNCPCPatches
+(
+    volScalarField& X
+) const
+{
+    if (!Pstream::parRun() || !compositionFluxFieldsAvailable())
+    {
+        return;
+    }
+
+    const wordList patchNames = selectedPatchNames();
+    const wordHashSet nameSet(patchNames);
+
+    const surfaceScalarField& liquidFlux = lookupSurfaceFlux(liquidFluxName_);
+    const surfaceScalarField& gasFlux    = lookupSurfaceFlux(gasFluxName_);
+
+    const scalar xD = reservoirX_;
+
+    const fvBoundaryMesh& bm = patch().boundaryMesh();
+
+    forAll(bm, pi)
+    {
+        if (!isA<nonConformalProcessorCyclicFvPatch>(bm[pi]))
+        {
+            continue;
+        }
+
+        const auto& ncpc =
+            refCast<const nonConformalProcessorCyclicFvPatch>(bm[pi]);
+
+        if (!nameSet.found(
+                ncpc.nonConformalProcessorCyclicPatch()
+                    .referPatch().name()))
+        {
+            continue;
+        }
+
+        const fvsPatchScalarField& Lp = liquidFlux.boundaryField()[pi];
+        const fvsPatchScalarField& Gp = gasFlux.boundaryField()[pi];
+
+        const scalarField xInternal(X.boundaryField()[pi].patchInternalField());
+        fvPatchField<scalar>& Xp = X.boundaryFieldRef()[pi];
+
+        forAll(Xp, facei)
+        {
+            // Condenser NCPC patches are NEIGHBOUR-side: sign is inverted.
+            // Inflow from condenser (liquid) has phi > 0 here; outflow (gas)
+            // has phi < 0. Use positive sign for "from condenser" detection.
+            const scalar Lfrom = max(Lp[facei], scalar(0));
+            const scalar Gfrom = applyToGasInlet_
+              ? max(Gp[facei], scalar(0))
+              : scalar(0);
+            const scalar totalFrom = Lfrom + Gfrom;
+
+            if (totalFrom > minFlux_)
+            {
+                // Total condenser: all returning fluid at xD.
+                Xp[facei] = xD;
+            }
+            else
+            {
+                // Outflow or stagnant: zero-gradient.
+                Xp[facei] = xInternal[facei];
+            }
+        }
+    }
+}
+
 
 inletOutletCondenserFvPatchScalarField::
 inletOutletCondenserFvPatchScalarField

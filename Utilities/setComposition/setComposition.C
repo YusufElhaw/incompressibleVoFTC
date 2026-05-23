@@ -319,7 +319,16 @@ word findPhase1FromAlphaField(const Time& runTime, const fvMesh& mesh, const wor
             IOobject::NO_WRITE
         );
 
-        if (alphaHeader.headerOk())
+        IOobject alphaOrigHeader
+        (
+            alphaName + ".orig",
+            runTime.name(),
+            mesh,
+            IOobject::READ_IF_PRESENT,
+            IOobject::NO_WRITE
+        );
+
+        if (alphaHeader.headerOk() || alphaOrigHeader.headerOk())
         {
             if (found == -1)
             {
@@ -934,15 +943,15 @@ word findScalarFieldObject
 
 wordList pressureFieldCandidates(const dictionary& dict)
 {
-    const word base = dict.lookupOrDefault<word>("pressureField", word("p_rgh"));
+    const word base = dict.lookupOrDefault<word>("pressureField", word("p"));
 
     DynamicList<word> names;
     appendUnique(names, base);
     appendUnique(names, word(base + ".orig"));
-    appendUnique(names, word("p_rgh"));
-    appendUnique(names, word("p_rgh.orig"));
     appendUnique(names, word("p"));
     appendUnique(names, word("p.orig"));
+    appendUnique(names, word("p_rgh"));
+    appendUnique(names, word("p_rgh.orig"));
 
     return dynamicToWordList(names);
 }
@@ -986,6 +995,98 @@ scalar pressureOffsetForPhase
 
     return 0.0;
 }
+
+// Compute molar concentration for a multi-component rhoConst phase.
+// Reads per-species density from species/equationOfState/rho in physicalProperties.
+// C = 1 / (x1*W1/rho1 + x2*W2/rho2)  [kmol/m³, molWeights in kg/kmol]
+// Returns false if the physicalProperties file does not use the multi-component format
+// (no top-level 'species' list or no per-species equationOfState/rho entries).
+bool readMultiComponentC0
+(
+    const Time& runTime,
+    const fvMesh& mesh,
+    const word& phase,
+    const word& species1name,
+    const word& species2name,
+    const scalar x1,
+    const scalar x2,
+    const scalar W1,
+    const scalar W2,
+    scalar& C,
+    fileName& source
+)
+{
+    const word objectName = physicalPropertiesObject(runTime, mesh, phase, false);
+    if (objectName == word::null) return false;
+
+    IOobject io
+    (
+        objectName,
+        runTime.constant(),
+        mesh,
+        IOobject::READ_IF_PRESENT,
+        IOobject::NO_WRITE
+    );
+
+    if (!io.headerOk()) return false;
+
+    IOdictionary props(io);
+
+    if (!props.found("species")) return false;
+
+    word actualS1, actualS2;
+    const bool hasS1 =
+        findEntryNameNoCase(props, species1name, actualS1) && props.isDict(actualS1);
+    const bool hasS2 =
+        findEntryNameNoCase(props, species2name, actualS2) && props.isDict(actualS2);
+
+    if (!hasS1 || !hasS2) return false;
+
+    const dictionary& sd1 = props.subDict(actualS1);
+    const dictionary& sd2 = props.subDict(actualS2);
+
+    if (!sd1.isDict("equationOfState") || !sd2.isDict("equationOfState")) return false;
+
+    const dictionary& eos1 = sd1.subDict("equationOfState");
+    const dictionary& eos2 = sd2.subDict("equationOfState");
+
+    if (!eos1.found("rho") || !eos2.found("rho")) return false;
+
+    const scalar rho1 = readScalar(eos1.lookup("rho"));
+    const scalar rho2 = readScalar(eos2.lookup("rho"));
+
+    if (rho1 <= VSMALL || rho2 <= VSMALL)
+    {
+        FatalErrorInFunction
+            << "Invalid species density in constant/" << objectName << ": "
+            << species1name << "/equationOfState/rho = " << rho1
+            << ", " << species2name << "/equationOfState/rho = " << rho2
+            << nl << exit(FatalError);
+    }
+
+    const scalar Vmix = x1*W1/rho1 + x2*W2/rho2;
+
+    if (Vmix <= VSMALL)
+    {
+        FatalErrorInFunction
+            << "Mixture molar volume is zero for phase '" << phase << "': "
+            << "x1=" << x1 << ", W1=" << W1 << ", rho1=" << rho1
+            << ", x2=" << x2 << ", W2=" << W2 << ", rho2=" << rho2
+            << nl << exit(FatalError);
+    }
+
+    C = 1.0/Vmix;
+    source = fileName("constant")/objectName;
+
+    Info<< "rho(" << phase << "/" << species1name << ") = " << rho1
+        << ", rho(" << phase << "/" << species2name << ") = " << rho2
+        << " read from " << source << nl
+        << "C(" << phase << ") = 1/(x1*W1/rho1 + x2*W2/rho2) = " << C
+        << " kmol/m³" << nl;
+
+    return true;
+}
+
 
 void phaseMolarConcentration
 (
@@ -1202,28 +1303,58 @@ void phaseMolarConcentration
             << "Falling back to rho/molWeight if rho is available." << nl;
     }
 
-    scalar rho = -1;
+    scalar C0 = -1;
     fileName rhoSource;
 
-    if (!readRhoFromPhaseProperties(runTime, mesh, phase, rho, rhoSource))
+    if
+    (
+        readMultiComponentC0
+        (
+            runTime, mesh, phase,
+            c.species1, c.species2,
+            x1, x2, c.W1, c.W2,
+            C0, rhoSource
+        )
+    )
     {
-        FatalErrorInFunction
-            << "Could not calculate molar concentration C for phase '" << phase << "'." << nl
-            << "For incompressible phases, define rho in constant/physicalProperties."
-            << phase << "." << nl
-            << "For perfectGas phases, provide p/T fields, e.g. 0/p_rgh and 0/T "
-            << "or 0/p_rgh.orig and 0/T.orig."
-            << nl << exit(FatalError);
+        // C0 and log output filled by readMultiComponentC0
     }
-
-    if (rho <= VSMALL)
+    else
     {
-        FatalErrorInFunction
-            << "rho for phase '" << phase << "' must be positive. Found rho="
-            << rho << " in " << rhoSource << nl << exit(FatalError);
-    }
+        scalar rho = -1;
 
-    const scalar C0 = rho/Wmix;
+        if (!readRhoFromPhaseProperties(runTime, mesh, phase, rho, rhoSource))
+        {
+            FatalErrorInFunction
+                << "Could not calculate molar concentration C for phase '"
+                << phase << "'." << nl
+                << "For multi-component rhoConst mixtures, define per species:" << nl
+                << "    " << c.species1
+                << " { equationOfState { rho <value>; } }" << nl
+                << "    " << c.species2
+                << " { equationOfState { rho <value>; } }" << nl
+                << "For single-component incompressible phases, define at top level:" << nl
+                << "    rho <value>;" << nl
+                << "For perfectGas phases, provide p/T fields, e.g. 0/p_rgh and 0/T."
+                << nl << exit(FatalError);
+        }
+
+        if (rho <= VSMALL)
+        {
+            FatalErrorInFunction
+                << "rho for phase '" << phase << "' must be positive. Found rho="
+                << rho << " in " << rhoSource << nl << exit(FatalError);
+        }
+
+        C0 = rho/Wmix;
+
+        Info<< "rho(" << phase << ") = " << rho
+            << " read from " << rhoSource << nl
+            << "Mmix(" << phase << ") = " << Wmix
+            << " from mole fractions and molWeights" << nl
+            << "Molar concentration C(" << phase << ") = rho/Mmix = "
+            << C0 << " used for cells and patches" << nl;
+    }
 
     forAll(CInternal, celli)
     {
@@ -1238,13 +1369,6 @@ void phaseMolarConcentration
             new scalarField(mesh.boundary()[patchi].size(), C0)
         );
     }
-
-    Info<< "rho(" << phase << ") = " << rho
-        << " read from " << rhoSource << nl
-        << "Mmix(" << phase << ") = " << Wmix
-        << " from mole fractions and molWeights" << nl
-        << "Molar concentration C(" << phase << ") = rho/Mmix = "
-        << C0 << " used for cells and patches" << nl;
 }
 
 void calculateXMoleFractionBoundaryValues
@@ -2179,11 +2303,23 @@ int main(int argc, char *argv[])
     const scalar alphaTol = setCompositionDict.lookupOrDefault<scalar>("alphaTol", 1e-4);
     const word alphaName = "alpha." + c.phase1;
 
+    IOobject alphaProbe
+    (
+        alphaName, runTime.name(), mesh,
+        IOobject::READ_IF_PRESENT, IOobject::NO_WRITE
+    );
+    const word alphaReadName =
+        alphaProbe.headerOk()
+      ? alphaName
+      : word(alphaName + ".orig");
+
+    Info<< "Reading alpha field from " << alphaReadName << nl;
+
     volScalarField alpha
     (
         IOobject
         (
-            alphaName,
+            alphaReadName,
             runTime.name(),
             mesh,
             IOobject::MUST_READ,

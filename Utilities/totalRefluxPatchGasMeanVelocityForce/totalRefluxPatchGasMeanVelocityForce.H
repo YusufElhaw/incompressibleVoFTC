@@ -50,6 +50,10 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Patch names used for measurement and gas control
         wordList patches_;
 
+        //- Resolved patch indices: includes original NCC patches from patches_
+        //  plus nonConformalProcessorCyclic patches that refer to them (parallel)
+        labelList patchIDs_;
+
         //- Name of the velocity field
         word UName_;
 
@@ -243,6 +247,10 @@ class totalRefluxPatchGasMeanVelocityForce
 
         //- Read coefficients from dictionary
         void readCoeffs(const dictionary& dict);
+
+        //- Build patchIDs_ from patches_ (original NCC) plus
+        //  nonConformalProcessorCyclic patches that refer to them (parallel)
+        void buildPatchIDs();
 
         //- Return true if a word looks like a liquid alpha field name
         static bool isAlphaFieldName(const word& name);

@@ -243,13 +243,6 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalTransportPredictor()
 }
 
 
-//void Foam::solvers::incompressibleVoFTC::pressureCorrector()
-//{
-//    incompressiblePressureCorrector(p);
-//}
-
-
-
 void Foam::solvers::incompressibleVoFTC::momentumTransportCorrector()
 {
     momentumTransport.correct();

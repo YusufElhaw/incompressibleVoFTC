@@ -36,8 +36,6 @@ License
 
 void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
 {
-    // compositionPredictor();
-
     volScalarField& T = mixture.T();
 
     const label nEnergyPicard
@@ -45,16 +43,15 @@ void Foam::solvers::incompressibleVoFTC::thermophysicalPredictor()
         max(1, pimple.dict().lookupOrDefault<label>("energyPicardIterations", 2))
     );
 
+    // Initialise thermo properties before the first Picard iteration.
+    mixture.correctThermo(p);
+    mixture.correct();
+    p_rgh_ = p - rho*buoyancy.gh;
+
     for (label picardIter = 0; picardIter < nEnergyPicard; ++picardIter)
     {
         Info<< "Energy Equation Picard iteration "
             << picardIter + 1 << "/" << nEnergyPicard << endl;
-
-
-        // Thermo-Felder passend zum aktuellen T und p aktualisieren
-        mixture.correctThermo(p);
-        mixture.correct();
-        p_rgh_ = p - rho*buoyancy.gh;
 
         const volScalarField& rho1 = mixture.thermo1().rho();
         const volScalarField& rho2 = mixture.thermo2().rho();

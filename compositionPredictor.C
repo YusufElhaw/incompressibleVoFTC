@@ -33,12 +33,6 @@ Description
             q = aL*X1L + aG*X1G
             X1G = A12*X1L/(1 + (A12 - 1)*X1L)
 
-        D does not appear in the VLE jump.  D appears only in D1Base/D2Base.
-
-    Important:
-        If D1 = D2 = 0, the RHS becomes zero and the equation is exactly the
-        old stable phase-separated advection equation.  No artificial VLE
-        relaxation is introduced in pure advection.
 
 \*---------------------------------------------------------------------------*/
 
@@ -57,6 +51,7 @@ Description
 #include "VLEConstant.H"
 #include "inletOutletCondenserFvPatchScalarField.H"
 #include "inletOutletBoilerFvPatchScalarField.H"
+#include "nonConformalProcessorCyclicFvPatch.H"
 
 // * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * * //
 
@@ -81,7 +76,7 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     // Alpha masks
     // ---------------------------------------------------------------------
 
-        const scalar aTol = 1e-5;
+        const scalar aTol = 1e-6;
 
         volScalarField a("a",min(max(alpha1, scalar(0)), scalar(1)));
         volScalarField ALPHA1("ALPHA1", (scalar(1) - pos(aTol - a) - pos(a - (scalar(1) - aTol)))*a+ pos(a - (scalar(1) - aTol)));
@@ -397,6 +392,80 @@ const volScalarField& CG = mesh.lookupObject<volScalarField>("CG");
         volScalarField dxEqdX("dxEqdX", X1*scalar(0) + scalar(1));
         volScalarField dYdXeq("dYdXeq", X1*scalar(0) + scalar(1));
 
+        // Single-point VLE split: given bulk mole fraction X_val and phase
+        // volume fractions aa (liquid), bb (gas), total moles mm, relative
+        // volatility A, compute equilibrium liquid x, gas y, dy/dx, and
+        // chain-rule factor dx/dX used for the diffusion Laplacian.
+        auto vlePoint =
+        [](
+            scalar X_val, scalar aa, scalar bb, scalar mm, scalar A,
+            scalar& xEq_out, scalar& yEq_out,
+            scalar& dydx_out, scalar& dxDX_out
+        )
+        {
+            if (aa > SMALL && bb > SMALL && mm > SMALL)
+            {
+                // Mixed/interface cell:
+                // q = aa*x + bb*y,  y = A*x/(1+(A-1)*x)
+                const scalar q  = mm*X_val;
+                const scalar c2 = aa*(A - scalar(1));
+                const scalar c1 = aa + bb*A - q*(A - scalar(1));
+
+                scalar x = X_val;
+                if (mag(c2) > VSMALL)
+                {
+                    const scalar disc = c1*c1 + scalar(4)*c2*q;
+                    x = (-c1 + sqrt(max(disc, scalar(0))))/(scalar(2)*c2);
+                }
+                else
+                {
+                    x = q/(aa + bb*A);
+                }
+
+                const scalar den  = scalar(1) + (A - scalar(1))*x;
+                const scalar y    = A*x/den;
+                const scalar s    = A/sqr(den);   // dy/dx
+                const scalar dqdx = aa + bb*s;
+
+                xEq_out  = x;
+                yEq_out  = y;
+                dydx_out = s;
+                dxDX_out = mag(dqdx) > VSMALL ? mm/dqdx : scalar(1);
+            }
+            else if (aa > SMALL && mm > SMALL)
+            {
+                // Pure liquid: X1 is liquid composition x
+                const scalar den = scalar(1) + (A - scalar(1))*X_val;
+                const scalar s   = A/sqr(den);
+
+                xEq_out  = X_val;
+                yEq_out  = A*X_val/den;
+                dydx_out = s;
+                dxDX_out = scalar(1);
+            }
+            else if (bb > SMALL && mm > SMALL)
+            {
+                // Pure gas: X1 is gas composition y; invert VLE to get x
+                const scalar denomInv = A - (A - scalar(1))*X_val;
+                const scalar x        = X_val/max(denomInv, VSMALL);
+                const scalar den      = scalar(1) + (A - scalar(1))*x;
+                const scalar s        = A/sqr(den);   // dy/dx at x
+
+                xEq_out  = x;
+                yEq_out  = X_val;
+                dydx_out = s;
+                // x = inverseVLE(y), so dx/dX = dx/dy = 1/(dy/dx)
+                dxDX_out = scalar(1)/max(s, VSMALL);
+            }
+            else
+            {
+                xEq_out  = X_val;
+                yEq_out  = X_val;
+                dydx_out = scalar(1);
+                dxDX_out = scalar(1);
+            }
+        };
+
         auto reconstructVLEPotential =
         [
             &X1,
@@ -407,216 +476,50 @@ const volScalarField& CG = mesh.lookupObject<volScalarField>("CG");
             &aL,
             &aG,
             &M,
-            &A12
+            &A12,
+            &vlePoint
         ]()
         {
-            scalarField& xEq = xEq_alg.primitiveFieldRef();
-            scalarField& yEq = yEq_alg.primitiveFieldRef();
+            scalarField& xEq  = xEq_alg.primitiveFieldRef();
+            scalarField& yEq  = yEq_alg.primitiveFieldRef();
             scalarField& dxDX = dxEqdX.primitiveFieldRef();
             scalarField& dydx = dYdXeq.primitiveFieldRef();
 
-            const scalarField& X = X1.primitiveField();
+            const scalarField& X   = X1.primitiveField();
             const scalarField& aLI = aL.primitiveField();
             const scalarField& aGI = aG.primitiveField();
-            const scalarField& MI = M.primitiveField();
-            const scalarField& AI = A12.primitiveField();
+            const scalarField& MI  = M.primitiveField();
+            const scalarField& AI  = A12.primitiveField();
 
             forAll(X, celli)
             {
-                const scalar aa = aLI[celli];
-                const scalar bb = aGI[celli];
-                const scalar mm = MI[celli];
-                const scalar A = AI[celli];
-
-                if (aa > SMALL && bb > SMALL && mm > SMALL)
-                {
-                    // Mixed/interface cell:
-                    // q = aa*x + bb*y
-                    // y = A*x/(1+(A-1)*x)
-
-                    const scalar q = mm*X[celli];
-
-                    const scalar c2 = aa*(A - scalar(1));
-                    const scalar c1 = aa + bb*A - q*(A - scalar(1));
-
-                    scalar x = X[celli];
-
-                    if (mag(c2) > VSMALL)
-                    {
-                        const scalar disc =
-                            c1*c1 + scalar(4)*c2*q;
-
-                        x =
-                            (-c1 + sqrt(max(disc, scalar(0))))
-                        /(scalar(2)*c2);
-                    }
-                    else
-                    {
-                        x = q/(aa + bb*A);
-                    }
-
-                    const scalar den = scalar(1) + (A - scalar(1))*x;
-                    const scalar y = A*x/den;
-                    const scalar s = A/sqr(den);   // dy/dx
-
-                    const scalar dqdx = aa + bb*s;
-
-                    xEq[celli] = x;
-                    yEq[celli] = y;
-                    dydx[celli] = s;
-
-                    if (mag(dqdx) > VSMALL)
-                    {
-                        dxDX[celli] = mm/dqdx;
-                    }
-                    else
-                    {
-                        dxDX[celli] = scalar(1);
-                    }
-                }
-                else if (aa > SMALL && mm > SMALL)
-                {
-                    // Pure liquid:
-                    // X1 is liquid composition x.
-                    const scalar x = X[celli];
-
-                    const scalar den = scalar(1) + (A - scalar(1))*x;
-                    const scalar s = A/sqr(den);
-
-                    xEq[celli] = x;
-                    yEq[celli] = A*x/den;
-                    dydx[celli] = s;
-                    dxDX[celli] = scalar(1);
-                }
-                else if (bb > SMALL && mm > SMALL)
-                {
-                    // Pure gas:
-                    // X1 is gas composition y.
-                    // For diffusion potential, convert y -> x via inverse VLE.
-                    const scalar y = X[celli];
-
-                    const scalar denomInv =
-                        A - (A - scalar(1))*y;
-
-                    scalar x = y/max(denomInv, VSMALL);
-
-                    const scalar den = scalar(1) + (A - scalar(1))*x;
-                    const scalar s = A/sqr(den);   // dy/dx at x
-
-                    xEq[celli] = x;
-                    yEq[celli] = y;
-                    dydx[celli] = s;
-
-                    // x = inverseVLE(y), so dx/dX = dx/dy = 1/(dy/dx)
-                    dxDX[celli] = scalar(1)/max(s, VSMALL);
-                }
-                else
-                {
-                    xEq[celli] = X[celli];
-                    yEq[celli] = X[celli];
-                    dydx[celli] = scalar(1);
-                    dxDX[celli] = scalar(1);
-                }
+                vlePoint
+                (
+                    X[celli], aLI[celli], aGI[celli], MI[celli], AI[celli],
+                    xEq[celli], yEq[celli], dydx[celli], dxDX[celli]
+                );
             }
 
             forAll(X1.boundaryField(), patchi)
             {
-                scalarField& xEqp = xEq_alg.boundaryFieldRef()[patchi];
-                scalarField& yEqp = yEq_alg.boundaryFieldRef()[patchi];
+                scalarField& xEqp  = xEq_alg.boundaryFieldRef()[patchi];
+                scalarField& yEqp  = yEq_alg.boundaryFieldRef()[patchi];
                 scalarField& dxDXp = dxEqdX.boundaryFieldRef()[patchi];
                 scalarField& dydxp = dYdXeq.boundaryFieldRef()[patchi];
 
-                const fvPatchScalarField& Xp = X1.boundaryField()[patchi];
+                const fvPatchScalarField& Xp  = X1.boundaryField()[patchi];
                 const fvPatchScalarField& aLp = aL.boundaryField()[patchi];
                 const fvPatchScalarField& aGp = aG.boundaryField()[patchi];
-                const fvPatchScalarField& Mp = M.boundaryField()[patchi];
-                const fvPatchScalarField& Ap = A12.boundaryField()[patchi];
+                const fvPatchScalarField& Mp  = M.boundaryField()[patchi];
+                const fvPatchScalarField& Ap  = A12.boundaryField()[patchi];
 
                 forAll(Xp, facei)
                 {
-                    const scalar aa = aLp[facei];
-                    const scalar bb = aGp[facei];
-                    const scalar mm = Mp[facei];
-                    const scalar A = Ap[facei];
-
-                    if (aa > SMALL && bb > SMALL && mm > SMALL)
-                    {
-                        const scalar q = mm*Xp[facei];
-
-                        const scalar c2 = aa*(A - scalar(1));
-                        const scalar c1 = aa + bb*A - q*(A - scalar(1));
-
-                        scalar x = Xp[facei];
-
-                        if (mag(c2) > VSMALL)
-                        {
-                            const scalar disc =
-                                c1*c1 + scalar(4)*c2*q;
-
-                            x =
-                                (-c1 + sqrt(max(disc, scalar(0))))
-                            /(scalar(2)*c2);
-                        }
-                        else
-                        {
-                            x = q/(aa + bb*A);
-                        }
-
-                        const scalar den = scalar(1) + (A - scalar(1))*x;
-                        const scalar y = A*x/den;
-                        const scalar s = A/sqr(den);
-
-                        const scalar dqdx = aa + bb*s;
-
-                        xEqp[facei] = x;
-                        yEqp[facei] = y;
-                        dydxp[facei] = s;
-
-                        if (mag(dqdx) > VSMALL)
-                        {
-                            dxDXp[facei] = mm/dqdx;
-                        }
-                        else
-                        {
-                            dxDXp[facei] = scalar(1);
-                        }
-                    }
-                    else if (aa > SMALL && mm > SMALL)
-                    {
-                        const scalar x = Xp[facei];
-
-                        const scalar den = scalar(1) + (A - scalar(1))*x;
-                        const scalar s = A/sqr(den);
-
-                        xEqp[facei] = x;
-                        yEqp[facei] = A*x/den;
-                        dydxp[facei] = s;
-                        dxDXp[facei] = scalar(1);
-                    }
-                    else if (bb > SMALL && mm > SMALL)
-                    {
-                        const scalar y = Xp[facei];
-
-                        const scalar denomInv =
-                            A - (A - scalar(1))*y;
-
-                        const scalar x = y/max(denomInv, VSMALL);
-
-                        const scalar den = scalar(1) + (A - scalar(1))*x;
-                        const scalar s = A/sqr(den);
-
-                        xEqp[facei] = x;
-                        yEqp[facei] = y;
-                        dydxp[facei] = s;
-                        dxDXp[facei] = scalar(1)/max(s, VSMALL);
-                    }
-                    else
-                    {
-                        xEqp[facei] = Xp[facei];
-                        yEqp[facei] = Xp[facei];
-                        dydxp[facei] = scalar(1);
-                        dxDXp[facei] = scalar(1);
-                    }
+                    vlePoint
+                    (
+                        Xp[facei], aLp[facei], aGp[facei], Mp[facei], Ap[facei],
+                        xEqp[facei], yEqp[facei], dydxp[facei], dxDXp[facei]
+                    );
                 }
             }
 
@@ -636,8 +539,66 @@ const volScalarField& CG = mesh.lookupObject<volScalarField>("CG");
         surfaceScalarField alphaCGPhi2("alphaCGPhi2", alphaPhi2*fvc::interpolate(CG));
         // Make boundary molar fluxes consistent with the final corrected U.
 // This is essential for conservative rectification inletOutlet BCs.
+// For nonConformalProcessorCyclic (NCPC) patches: apply upwind-correct
+// molar density. alphaPhi*fvc::interpolate(CL/CG) uses the neighbour
+// boundary value (MPI-received), which is WRONG for OUTFLOW faces where
+// the exiting fluid carries the OWN cell's molar concentration.
+// Use own-cell CL/CG for outflow (phi>0), neighbour CL/CG for inflow
+// (phi<0 — incoming fluid comes from the cyclic neighbour side).
+// Do NOT use U & Sf here (wrong face-normal convention for NCC geometry).
 forAll(mesh.boundary(), patchi)
 {
+    if (isA<nonConformalProcessorCyclicFvPatch>(mesh.boundary()[patchi]))
+    {
+        const fvsPatchScalarField& alphaPhi1p =
+            alphaPhi1.boundaryField()[patchi];
+        const fvsPatchScalarField& alphaPhi2p =
+            alphaPhi2.boundaryField()[patchi];
+
+        const scalarField CLp_own(CL.boundaryField()[patchi].patchInternalField());
+        const scalarField CGp_own(CG.boundaryField()[patchi].patchInternalField());
+        const fvPatchScalarField& CLp_nbr = CL.boundaryField()[patchi];
+        const fvPatchScalarField& CGp_nbr = CG.boundaryField()[patchi];
+
+        fvsPatchScalarField& alphaCLPhi1p =
+            alphaCLPhi1.boundaryFieldRef()[patchi];
+        fvsPatchScalarField& alphaCGPhi2p =
+            alphaCGPhi2.boundaryFieldRef()[patchi];
+
+        // NCPC patches come in two flavours:
+        //
+        //   Owner-side (boiler, proc 0/1):  standard convention
+        //     phi1 > 0 = liquid OUTFLOW to boiler reservoir
+        //     phi2 < 0 = gas   INFLOW  from boiler reservoir
+        //
+        //   Neighbour-side (condenser, proc 2/3):  INVERTED convention
+        //     phi1 > 0 = liquid INFLOW  from condenser reservoir
+        //     phi2 < 0 = gas   OUTFLOW  to condenser reservoir
+        //
+        // For the condenser side we must NEGATE alphaCL/CGPhi so that the
+        // FVM assembler (which always uses phi>0=outflow) sees the correct
+        // direction, and applyInletValuesOnNCPCPatches() can supply xD at
+        // the now-negative (inflow) liquid faces.
+        //
+        // Global mole conservation requires:
+        //   liquid CL: use boiler (NBR at condenser) so both sides of the
+        // All NCPC patches: standard upwind (own for outflow, nbr for inflow).
+        // alphaCLPhi1 keeps the raw phi sign so measureCompositionPredictorFluxes
+        // in the BC classes can read it with the expected convention.
+        forAll(alphaCLPhi1p, facei)
+        {
+            const scalar phi1 = alphaPhi1p[facei];
+            const scalar phi2 = alphaPhi2p[facei];
+            alphaCLPhi1p[facei] =
+                max(phi1, scalar(0))*CLp_own[facei]
+              + min(phi1, scalar(0))*CLp_nbr[facei];
+            alphaCGPhi2p[facei] =
+                max(phi2, scalar(0))*CGp_own[facei]
+              + min(phi2, scalar(0))*CGp_nbr[facei];
+        }
+        continue;
+    }
+
     const fvsPatchVectorField& Sfp =
         mesh.Sf().boundaryField()[patchi];
 
@@ -675,6 +636,34 @@ forAll(mesh.boundary(), patchi)
 }
 
         X1.correctBoundaryConditions();
+
+    // In parallel, the original NCC patches (inletOutletBoiler/Condenser)
+    // have size=0 so their updateCoeffs() is a no-op.  The actual NCC faces
+    // live on nonConformalProcessorCyclic (NCPC) patches whose field values
+    // are set by the MPI exchange (patchInternalField from the neighbour).
+    // For incoming faces this gives the wrong composition; override them now
+    // with the reservoir composition BEFORE fvMatrix assembly reads them.
+    auto applyNCPCInletValues = [&]()
+    {
+        if (!Pstream::parRun()) return;
+        forAll(X1.boundaryField(), patchi)
+        {
+            const fvPatchScalarField& pf = X1.boundaryField()[patchi];
+            if (isA<inletOutletCondenserFvPatchScalarField>(pf))
+            {
+                refCast<const inletOutletCondenserFvPatchScalarField>(pf)
+                    .applyInletValuesOnNCPCPatches(X1);
+            }
+            else if (isA<inletOutletBoilerFvPatchScalarField>(pf))
+            {
+                refCast<const inletOutletBoilerFvPatchScalarField>(pf)
+                    .applyInletValuesOnNCPCPatches(X1);
+            }
+        }
+    };
+
+    applyNCPCInletValues();
+
         X2 = scalar(1) - X1;
         X2.correctBoundaryConditions();
     // ---------------------------------------------------------------------
@@ -688,15 +677,17 @@ forAll(mesh.boundary(), patchi)
 
         const bool boundComposition(pimple.dict().lookupOrDefault<bool>("compositionBoundX",false));
 
+        // Molar-continuity errors: depend only on CL/CG and the fluxes,
+        // which are fixed for the duration of the Picard loop.
+        const volScalarField contErrCL1("contErrCL1", fvc::ddt(alpha1, CL) + fvc::div(alphaCLPhi1));
+        const volScalarField contErrCG2("contErrCG2", fvc::ddt(alpha2, CG) + fvc::div(alphaCGPhi2));
+
         for (label picardIter = 0; picardIter < nCompositionPicard; ++picardIter)
         {
             Info<< "compositionPredictor Picard iteration "
                 << picardIter + 1 << "/" << nCompositionPicard << endl;
 
             reconstructVLEPotential();
-
-            volScalarField contErrCL1("contErrCL1", fvc::ddt(alpha1, CL) + fvc::div(alphaCLPhi1));
-            volScalarField contErrCG2("contErrCG2", fvc::ddt(alpha2, CG) + fvc::div(alphaCGPhi2));
 
             // Diffusion coefficient in the common VLE potential xEq:
             //
@@ -783,9 +774,7 @@ forAll(mesh.boundary(), patchi)
             }
 
             X1.correctBoundaryConditions();
-
-            X2 = scalar(1) - X1;
-            X2.correctBoundaryConditions();
+            applyNCPCInletValues();
         }
 
     // ---------------------------------------------------------------------
@@ -812,6 +801,110 @@ forAll(mesh.boundary(), patchi)
                     .advanceReservoir();
             }
         }
+
+    // ---------------------------------------------------------------------
+    // NCPC molar conservation correction
+    // ---------------------------------------------------------------------
+    // The nonConformalProcessorCyclic (NCPC) patches at the column interior
+    // cyclic interface are not perfectly conservative: NCC interpolation can
+    // create or destroy moles there. Measure the molar flux imbalance at all
+    // interior NCPC patches (i.e. those whose referPatch is NOT a boiler/
+    // condenser patch) and redistribute the imbalance to the reservoirs so
+    // that N_sys = N_col + N_D + N_B remains constant.
+    //
+    // Sign convention: alphaCLPhi1/alphaCGPhi2 > 0 = leaving the column.
+    // Global sum over interior NCPC faces < 0 → NCPC creates moles in column.
+    // Correction deltaN = flux_sum * dt: negative → remove moles from reservoir.
+    // Liquid-phase imbalance is attributed to the boiler;
+    // gas-phase imbalance to the condenser.
+    if (Pstream::parRun())
+    {
+        // Identify reservoir patch names to exclude their NCPC counterparts
+        wordHashSet reservoirPatchNames;
+        forAll(X1.boundaryField(), patchi)
+        {
+            if
+            (
+                isA<inletOutletBoilerFvPatchScalarField>
+                    (X1.boundaryField()[patchi])
+             || isA<inletOutletCondenserFvPatchScalarField>
+                    (X1.boundaryField()[patchi])
+            )
+            {
+                reservoirPatchNames.insert(mesh.boundary()[patchi].name());
+            }
+        }
+
+        scalar fluxLiqN  = 0;   // liquid-phase total molar flux at interior NCPC
+        scalar fluxLiqN1 = 0;   // species-1 liquid-phase
+        scalar fluxGasN  = 0;   // gas-phase total molar flux
+        scalar fluxGasN1 = 0;   // species-1 gas-phase
+
+        forAll(mesh.boundary(), patchi)
+        {
+            if (!isA<nonConformalProcessorCyclicFvPatch>(mesh.boundary()[patchi]))
+                continue;
+
+            const auto& ncpc =
+                refCast<const nonConformalProcessorCyclicFvPatch>
+                    (mesh.boundary()[patchi]);
+
+            const word refName =
+                ncpc.nonConformalProcessorCyclicPatch().referPatch().name();
+
+            if (reservoirPatchNames.found(refName))
+                continue;
+
+            const scalarField& phiL  = alphaCLPhi1.boundaryField()[patchi];
+            const scalarField& phiG  = alphaCGPhi2.boundaryField()[patchi];
+            const scalarField  X1int =
+                X1.boundaryField()[patchi].patchInternalField();
+
+            forAll(phiL, facei)
+            {
+                fluxLiqN  += phiL[facei];
+                fluxLiqN1 += phiL[facei] * X1int[facei];
+                fluxGasN  += phiG[facei];
+                fluxGasN1 += phiG[facei] * X1int[facei];
+            }
+        }
+
+        reduce(fluxLiqN,  sumOp<scalar>());
+        reduce(fluxLiqN1, sumOp<scalar>());
+        reduce(fluxGasN,  sumOp<scalar>());
+        reduce(fluxGasN1, sumOp<scalar>());
+
+        const scalar dt = runTime.deltaT().value();
+
+        const scalar deltaBoilerN  = fluxLiqN  * dt;
+        const scalar deltaBoilerN1 = fluxLiqN1 * dt;
+        const scalar deltaCondN    = fluxGasN  * dt;
+        const scalar deltaCondN1   = fluxGasN1 * dt;
+
+        if (Pstream::master())
+        {
+            Info<< "NCPC conservation: dN_boiler=" << deltaBoilerN
+                << " dN_cond=" << deltaCondN
+                << " dN_total=" << deltaBoilerN + deltaCondN
+                << nl;
+        }
+
+        forAll(X1.boundaryFieldRef(), patchi)
+        {
+            fvPatchScalarField& pf = X1.boundaryFieldRef()[patchi];
+
+            if (isA<inletOutletBoilerFvPatchScalarField>(pf))
+            {
+                refCast<inletOutletBoilerFvPatchScalarField>(pf)
+                    .correctReservoir(deltaBoilerN, deltaBoilerN1);
+            }
+            else if (isA<inletOutletCondenserFvPatchScalarField>(pf))
+            {
+                refCast<inletOutletCondenserFvPatchScalarField>(pf)
+                    .correctReservoir(deltaCondN, deltaCondN1);
+            }
+        }
+    }
 
     // ---------------------------------------------------------------------
     // Final algebraic split for mixed-cell back-substitution
@@ -855,9 +948,7 @@ forAll(mesh.boundary(), patchi)
 
         volScalarField ALPHA1_pure("ALPHA1_pure", pos(ALPHA1 - (scalar(1) - aTol)));    // only cells with pure phases, mixed cells 0
         volScalarField ALPHA2_pure("ALPHA2_pure", pos(ALPHA2 - (scalar(1) - aTol)));    // only cells with pure phases, mixed cells 0
-        volScalarField ALPHA1_mix("ALPHA1_mix",   pos(ALPHA1 - ALPHA1_pure)*(ALPHA1 - ALPHA1_pure)); // alpha1 for mixed cells 
-        volScalarField ALPHA2_mix("ALPHA2_mix",   pos(ALPHA2 - ALPHA2_pure)*(ALPHA2 - ALPHA2_pure)); // alpha2 for mixed cells 
-
+                
         const dimensionedScalar denomMinW("denomMinW", W1.dimensions(),SMALL);
         // Mass fraction of the pure phases
 
@@ -885,10 +976,6 @@ forAll(mesh.boundary(), patchi)
         Y2L.correctBoundaryConditions();
         Y1G.correctBoundaryConditions();
         Y2G.correctBoundaryConditions();
-
-    // ---------------------------------------------------------------------
-    // Mole conservation diagnostics
-    // ---------------------------------------------------------------------
 
         nMoles1 = alpha1*mixture.thermo1().rho()*Y1L/W1
                 + alpha2*mixture.thermo2().rho()*Y1G/W1;

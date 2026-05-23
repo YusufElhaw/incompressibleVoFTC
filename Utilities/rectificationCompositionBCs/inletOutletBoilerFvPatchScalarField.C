@@ -11,6 +11,8 @@
 #include "typeInfo.H"
 #include <fstream>
 #include "OSspecific.H"
+#include "nonConformalProcessorCyclicFvPatch.H"
+#include "HashSet.H"
 
 namespace Foam
 {
@@ -197,9 +199,30 @@ void inletOutletBoilerFvPatchScalarField::measureCompositionPredictorFluxes
     n1LfromReservoir = 0;
     n1GfromReservoir = 0;
 
-    forAll(patchNames, patchNamei)
+    // In parallel, original NCC patches have size=0; include procBoundary patches.
+    DynamicList<label> measureIDs(patchNames.size());
     {
-        const label patchi = patchID(patchNames[patchNamei]);
+        forAll(patchNames, i) measureIDs.append(patchID(patchNames[i]));
+        if (Pstream::parRun())
+        {
+            const wordHashSet nameSet(patchNames);
+            const fvBoundaryMesh& bm = patch().boundaryMesh();
+            forAll(bm, pi)
+            {
+                if (!isA<nonConformalProcessorCyclicFvPatch>(bm[pi])) continue;
+                const auto& ncpc =
+                    refCast<const nonConformalProcessorCyclicFvPatch>(bm[pi]);
+                if (nameSet.found(
+                        ncpc.nonConformalProcessorCyclicPatch()
+                            .referPatch().name()))
+                    measureIDs.append(pi);
+            }
+        }
+    }
+
+    forAll(measureIDs, _i)
+    {
+        const label patchi = measureIDs[_i];
 
         const fvsPatchScalarField& Lp =
             liquidFlux.boundaryField()[patchi];
@@ -349,9 +372,31 @@ scalar inletOutletBoilerFvPatchScalarField::meanA12
     scalar sumA = 0;
     scalar sumA12A = 0;
 
-    forAll(patchNames, patchNamei)
+    // In parallel, original NCC patches have size=0; actual faces are on
+    // nonConformalProcessorCyclic patches. Include both in the measurement.
+    DynamicList<label> measureIDs(patchNames.size());
     {
-        const label patchi = patchID(patchNames[patchNamei]);
+        forAll(patchNames, i) measureIDs.append(patchID(patchNames[i]));
+        if (Pstream::parRun())
+        {
+            const wordHashSet nameSet(patchNames);
+            const fvBoundaryMesh& bm = patch().boundaryMesh();
+            forAll(bm, pi)
+            {
+                if (!isA<nonConformalProcessorCyclicFvPatch>(bm[pi])) continue;
+                const auto& ncpc =
+                    refCast<const nonConformalProcessorCyclicFvPatch>(bm[pi]);
+                if (nameSet.found(
+                        ncpc.nonConformalProcessorCyclicPatch()
+                            .referPatch().name()))
+                    measureIDs.append(pi);
+            }
+        }
+    }
+
+    forAll(measureIDs, _i)
+    {
+        const label patchi = measureIDs[_i];
 
         const scalarField& magSf = mesh.boundary()[patchi].magSf();
         const fvPatchScalarField& A12p = A12.boundaryField()[patchi];
@@ -370,9 +415,10 @@ scalar inletOutletBoilerFvPatchScalarField::meanA12
 
     if (sumA <= SMALL)
     {
-        FatalErrorInFunction
-            << "Patch area is zero while computing mean A12."
-            << exit(FatalError);
+        // NCC patch area is 0 until stitcher_->connect() runs in the first
+        // PIMPLE iteration. Return neutral A12 = 1 (no VLE selectivity) as
+        // startup default; correct value is used from the next iteration on.
+        return scalar(1);
     }
 
     return max(sumA12A/sumA, SMALL);
@@ -783,6 +829,116 @@ inletOutletBoilerFvPatchScalarField::reservoirInletValue() const
 
     return tval;
 }
+
+
+void inletOutletBoilerFvPatchScalarField::correctReservoir
+(
+    const scalar deltaN,
+    const scalar deltaN1
+)
+{
+    const scalar N1old = reservoirMoles_ * reservoirX_;
+    reservoirMoles_ = max(reservoirMoles_ + deltaN, minReservoirMoles_);
+    if (reservoirMoles_ > SMALL)
+    {
+        reservoirX_ = clamp((N1old + deltaN1) / reservoirMoles_);
+        reservoirY_ = yVLE(reservoirX_, lastA12_);
+    }
+}
+
+
+void inletOutletBoilerFvPatchScalarField::applyInletValuesOnNCPCPatches
+(
+    volScalarField& X
+) const
+{
+    if (!Pstream::parRun() || !compositionFluxFieldsAvailable())
+    {
+        return;
+    }
+
+    const wordList patchNames = selectedPatchNames();
+    const wordHashSet nameSet(patchNames);
+
+    const surfaceScalarField& liquidFlux = lookupSurfaceFlux(liquidFluxName_);
+    const surfaceScalarField& gasFlux    = lookupSurfaceFlux(gasFluxName_);
+
+    const scalar xB = reservoirX_;
+    const scalar yB = reservoirY_;
+
+    const fvBoundaryMesh& bm = patch().boundaryMesh();
+
+    label nPatches = 0;
+    label nFacesIn = 0;
+    label nFacesOut = 0;
+
+    forAll(bm, pi)
+    {
+        if (!isA<nonConformalProcessorCyclicFvPatch>(bm[pi]))
+        {
+            continue;
+        }
+
+        const auto& ncpc =
+            refCast<const nonConformalProcessorCyclicFvPatch>(bm[pi]);
+
+        const word refName =
+            ncpc.nonConformalProcessorCyclicPatch().referPatch().name();
+
+        if (!nameSet.found(refName))
+        {
+            continue;
+        }
+
+        ++nPatches;
+
+        const fvsPatchScalarField& Lp = liquidFlux.boundaryField()[pi];
+        const fvsPatchScalarField& Gp = gasFlux.boundaryField()[pi];
+
+        const scalarField xInternal(X.boundaryField()[pi].patchInternalField());
+        fvPatchField<scalar>& Xp = X.boundaryFieldRef()[pi];
+
+        const scalar LpMin = min(Lp);
+        const scalar LpMax = max(Lp);
+        const scalar GpMin = min(Gp);
+        const scalar GpMax = max(Gp);
+
+        Pout<< "inletOutletBoiler::applyNCPC patch=" << bm[pi].name()
+            << " refPatch=" << refName
+            << " size=" << Xp.size()
+            << " Lp=[" << LpMin << "," << LpMax << "]"
+            << " Gp=[" << GpMin << "," << GpMax << "]"
+            << " xB=" << xB << " yB=" << yB << nl;
+
+        forAll(Xp, facei)
+        {
+            const scalar Lfrom = max(-Lp[facei], scalar(0));
+            const scalar Gfrom = max(-Gp[facei], scalar(0));
+            const scalar totalFrom = Lfrom + Gfrom;
+
+            if (totalFrom > minFlux_)
+            {
+                Xp[facei] = clamp((Lfrom*xB + Gfrom*yB)/totalFrom);
+                ++nFacesIn;
+            }
+            else
+            {
+                Xp[facei] = xInternal[facei];
+                ++nFacesOut;
+            }
+        }
+    }
+
+    if (nPatches > 0 || true)
+    {
+        Pout<< "inletOutletBoiler::applyNCPC " << patch().name()
+            << " nPatches=" << nPatches
+            << " nFacesIn=" << nFacesIn
+            << " nFacesOut=" << nFacesOut
+            << " xB=" << xB << " yB=" << yB << nl;
+    }
+}
+
 
 inletOutletBoilerFvPatchScalarField::
 inletOutletBoilerFvPatchScalarField

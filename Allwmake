@@ -4,6 +4,8 @@ cd ${0%/*} || exit 1    # Run from this directory
 # Parse arguments for library compilation
 . $WM_PROJECT_DIR/wmake/scripts/AllwmakeParseArguments
 
+wmake $targetType Utilities/rectificationCompositionBCs   # must precede main solver (linked by it)
+
 wmake $targetType
 
 wmake $targetType fvModels/VoFTurbulenceDamping
@@ -15,7 +17,6 @@ wmake $targetType Utilities/incompressibleVoFCyclic
 wmake $targetType Utilities/setHoldup
 wmake $targetType Utilities/prghNonConformalCyclicPressureFvPatchScalarField
 wmake $targetType Utilities/setComposition
-wmake $targetType Utilities/rectificationCompositionBCs
 wmake $targetType Utilities/totalRefluxPatchGasMeanVelocityForce
 wmake $targetType Utilities/reservoirFenske
 #------------------------------------------------------------------------------

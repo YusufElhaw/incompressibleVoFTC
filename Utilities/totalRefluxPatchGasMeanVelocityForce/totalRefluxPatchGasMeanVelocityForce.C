@@ -10,6 +10,7 @@
 #include "totalRefluxPatchGasMeanVelocityForce.H"
 
 #include "addToRunTimeSelectionTable.H"
+#include "nonConformalProcessorCyclicFvPatch.H"
 #include "fvMatrices.H"
 #include "IFstream.H"
 #include "IOdictionary.H"
@@ -232,6 +233,8 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::readCoeffs
 
     maxBalanceCorrectionFraction_ =
         dict.lookupOrDefault<scalar>("maxBalanceCorrectionFraction", -1);
+
+    buildPatchIDs();
 }
 
 
@@ -514,6 +517,50 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::writeProps
 }
 
 
+void Foam::fv::totalRefluxPatchGasMeanVelocityForce::buildPatchIDs()
+{
+    DynamicList<label> ids(patches_.size());
+
+    // Original NCC patches from patches_
+    forAll(patches_, i)
+    {
+        ids.append(mesh().boundaryMesh().findIndex(patches_[i]));
+    }
+
+    // In parallel: NCC inter-processor faces live on nonConformalProcessorCyclic
+    // patches (procBoundaryXtoYthrough<patchName>), not on the original NCC patch
+    // which has size 0 on each processor. Add them so area and flux measurements
+    // are correct in parallel decomposed cases.
+    if (Pstream::parRun())
+    {
+        const wordHashSet patchNameSet(patches_);
+        const fvBoundaryMesh& bm = mesh().boundary();
+        forAll(bm, patchi)
+        {
+            if (!isA<nonConformalProcessorCyclicFvPatch>(bm[patchi]))
+            {
+                continue;
+            }
+            const nonConformalProcessorCyclicFvPatch& ncpc =
+                refCast<const nonConformalProcessorCyclicFvPatch>(bm[patchi]);
+            if
+            (
+                patchNameSet.found
+                (
+                    ncpc.nonConformalProcessorCyclicPatch()
+                        .referPatch().name()
+                )
+            )
+            {
+                ids.append(patchi);
+            }
+        }
+    }
+
+    patchIDs_ = ids;
+}
+
+
 void Foam::fv::totalRefluxPatchGasMeanVelocityForce::measureDownwardTotalReflux
 (
     const volVectorField& U,
@@ -574,10 +621,9 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::measureDownwardTotalReflux
     scalar sumQGUp = 0;
     scalar sumA = 0;
 
-    forAll(patches_, patchNamei)
+    forAll(patchIDs_, patchi_idx)
     {
-        const word& patchName = patches_[patchNamei];
-        const label patchi = mesh().boundaryMesh().findIndex(patchName);
+        const label patchi = patchIDs_[patchi_idx];
 
         const scalarField& magSf = mesh().boundary()[patchi].magSf();
         const fvPatchScalarField& alpha1p = alpha1.boundaryField()[patchi];
@@ -749,10 +795,9 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::measureDownwardTotalRefluxM
     scalar sumCGAG = 0;
     scalar sumAG = 0;
 
-    forAll(patches_, patchNamei)
+    forAll(patchIDs_, patchi_idx)
     {
-        const word& patchName = patches_[patchNamei];
-        const label patchi = mesh().boundaryMesh().findIndex(patchName);
+        const label patchi = patchIDs_[patchi_idx];
 
         const scalarField& magSf = mesh().boundary()[patchi].magSf();
         const vectorField& Sfp = mesh().Sf().boundaryField()[patchi];
@@ -1022,15 +1067,40 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateTotalRefluxLoading
 
         if (CG <= SMALL)
         {
-            FatalErrorInFunction
-                << "Gas total molar concentration is too small for molar total reflux."
-                << exit(FatalError);
-        }
+            // CG = 0 is normal at startup when alpha.gas at NCC BR patches is
+            // zero (e.g. during NCC BC initialisation before flow develops, or
+            // when the packing base is in the liquid hold-up zone).
+            // With no flow yet (nDown ≈ 0) the correct target is also 0.
+            // Once gas appears at the BR patches CG will become positive and
+            // the constraint will activate normally.
+            // A persistent CG = 0 mid-run indicates a genuine initialisation
+            // or mesh problem; check alpha.gas and rho.gas at the BR patches.
+            if (!liquidLoadingInitialized_)
+            {
+                WarningInFunction
+                    << "Gas molar concentration at NCC BR patches is zero at "
+                    << "startup (CG = " << CG << "). "
+                    << "Setting gas loading target to 0 until flow develops."
+                    << endl;
+            }
+            else
+            {
+                WarningInFunction
+                    << "Gas molar concentration at NCC BR patches is zero "
+                    << "(CG = " << CG << ") at time "
+                    << mesh().time().name()
+                    << ". Gas loading target set to 0 this time step." << endl;
+            }
 
-        // Molar total reflux:
-        //     NGasUp,target = NDown
-        //     QGasUp,target = NDown / CG
-        qGTarget = nDown/CG;
+            // Fall through with qGTarget = 0 (already initialised above)
+        }
+        else
+        {
+            // Molar total reflux:
+            //     NGasUp,target = NDown
+            //     QGasUp,target = NDown / CG
+            qGTarget = nDown/CG;
+        }
     }
     else
     {
@@ -1176,10 +1246,9 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateDensities
         scalar sumRhoLA = 0;
         scalar sumRhoGA = 0;
 
-        forAll(patches_, patchNamei)
+        forAll(patchIDs_, patchi_idx)
         {
-            const word& patchName = patches_[patchNamei];
-            const label patchi = mesh().boundaryMesh().findIndex(patchName);
+            const label patchi = patchIDs_[patchi_idx];
 
             const scalarField& magSf = mesh().boundary()[patchi].magSf();
             const fvPatchScalarField& rhoLp = rhoL.boundaryField()[patchi];
@@ -1339,10 +1408,9 @@ Foam::scalar Foam::fv::totalRefluxPatchGasMeanVelocityForce::patchGasUbarAve
     scalar sumA = 0;
     scalar sumQGUp = 0;
 
-    forAll(patches_, patchNamei)
+    forAll(patchIDs_, patchi_idx)
     {
-        const word& patchName = patches_[patchNamei];
-        const label patchi = mesh().boundaryMesh().findIndex(patchName);
+        const label patchi = patchIDs_[patchi_idx];
 
         const scalarField& magSf = mesh().boundary()[patchi].magSf();
         const vectorField& Sfp = mesh().Sf().boundaryField()[patchi];
@@ -1386,10 +1454,9 @@ Foam::scalar Foam::fv::totalRefluxPatchGasMeanVelocityForce::patchResponseAve
     scalar sumA = 0;
     scalar sumResponse = 0;
 
-    forAll(patches_, patchNamei)
+    forAll(patchIDs_, patchi_idx)
     {
-        const word& patchName = patches_[patchNamei];
-        const label patchi = mesh().boundaryMesh().findIndex(patchName);
+        const label patchi = patchIDs_[patchi_idx];
 
         const scalarField& magSf = mesh().boundary()[patchi].magSf();
         const fvPatchScalarField& alpha1p = alpha1.boundaryField()[patchi];

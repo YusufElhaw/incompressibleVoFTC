@@ -244,6 +244,17 @@ public:
     //  Called explicitly from compositionPredictor after the solve.
     void advanceReservoir();
 
+    //- Correct reservoir state for NCPC molar non-conservation.
+    //  deltaN  [mol]: moles to add (negative removes moles from reservoir).
+    //  deltaN1 [mol]: species-1 moles to add correspondingly.
+    void correctReservoir(const scalar deltaN, const scalar deltaN1);
+
+    //- In parallel runs, directly set reservoir inlet composition on
+    //  nonConformalProcessorCyclic faces for incoming flow.
+    //  Must be called AFTER X.correctBoundaryConditions() (MPI exchange)
+    //  and BEFORE fvMatrix assembly on each time step / Picard iteration.
+    void applyInletValuesOnNCPCPatches(volScalarField& X) const;
+
     //- Update coefficients.
     virtual void updateCoeffs();
 

@@ -357,11 +357,24 @@ int main(int argc, char *argv[])
 
     autoPtr<implicitFunction> geom = implicitFunction::New(setHoldupDict);
 
+    IOobject alphaProbe
+    (
+        fieldName, mesh.time().name(), mesh,
+        IOobject::READ_IF_PRESENT, IOobject::NO_WRITE
+    );
+    const word alphaReadName =
+        alphaProbe.headerOk()
+      ? fieldName
+      : word(fieldName + ".orig");
+
+    if (alphaReadName != fieldName)
+        Info<< "Reading " << fieldName << " from " << alphaReadName << nl;
+
     volScalarField alpha
     (
         IOobject
         (
-            fieldName,
+            alphaReadName,
             mesh.time().name(),
             mesh,
             IOobject::MUST_READ,
@@ -369,6 +382,7 @@ int main(int argc, char *argv[])
         ),
         mesh
     );
+    alpha.rename(fieldName);
 
     std::vector<activeCell> cells;
     scalar localSupportVolume = 0;
