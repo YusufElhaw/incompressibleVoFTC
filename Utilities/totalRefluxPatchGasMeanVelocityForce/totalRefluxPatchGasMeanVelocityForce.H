@@ -12,16 +12,20 @@
     cases.  It uses only fields from the objectRegistry and is intended to run
     with incompressible/compressible VOF-style two-phase solvers.
 
-    Robust default liquid-load measurement:
+    Two-phase control:
 
-        Q_L = sum_patch alphaLiquid*(U & gasDirection)*magSf
-        B_L = max(0, -Q_L/A_0)       // counterCurrent total reflux mode
-        U_G,soll = (rho_L/rho_G) B_L gasDirection
+    Phase 1 (pre-SS): feed-forward
+        jGbase = nDown / (CG * A0)      [molar mode]
+               = mDown / (rhoG * A0)    [mass mode]
+        smoothed by EMA filter (averagingInterval)
 
-    Compared to an alphaPhi-only measurement this avoids extremely large
-    intermediate alphaPhi values that can occur on NCC/coupled patches during
-    pressure/alpha corrections.  alphaPhi mode is still available for cases
-    where exact surfaceFieldValue-like patch-normal fluxes are desired.
+    Phase 2 (post-SS, only when inletOutletBoiler BC is found):
+        jGcorrection_ += K * e / (CG * A0 * tau) * dt
+        where e = N_boiler(t) - N_boiler_SS
+        jGtarget = max(0, jGbase + jGcorrection_)
+
+    Always: rate limiter on |d(jGtarget)/dt| <= maxDeltaGasLoading.
+    No velocity cap, no window balance controller.
 
 \*---------------------------------------------------------------------------*/
 
@@ -100,8 +104,7 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Fixed gas target direction. Default is upward y: (0 1 0)
         vector gasDirection_;
 
-        //- Time interval for total reflux loading averaging [s].
-        //  <=0 means instantaneous
+        //- Time interval for EMA loading averaging [s]. <=0 means instantaneous
         scalar averagingInterval_;
 
         //- Relaxation factor for the pressure-gradient update
@@ -119,16 +122,10 @@ class totalRefluxPatchGasMeanVelocityForce
         //- For total reflux, downward/outgoing means opposite to gasDirection
         bool counterCurrent_;
 
-        //- Optional cap for |targetUbar_|. A negative value disables the cap.
-        scalar maxGasLoading_;
+        //- Max allowed |d(jGtarget)/dt| [m/s/s]. <=0 disables rate limiter.
+        scalar maxDeltaGasLoading_;
 
-        //- Optional cap for |gradP|. A negative value disables the cap.
-        scalar maxPressureGradient_;
-
-        //- Optional cap for |dGradP| per velocity correction. Negative disables.
-        scalar maxDeltaPressureGradient_;
-
-        //- Last time-index used for integrating the measured reflux
+        //- Last time-index used for integrating the measured reflux / I-controller
         mutable label lastIntegratedTimeIndex_;
 
         //- Accumulated equivalent target gas volume over averaging window [m3]
@@ -142,9 +139,6 @@ class totalRefluxPatchGasMeanVelocityForce
 
         //- Last selected patch/segment area [m2]
         mutable scalar patchArea_;
-
-        //- Last instantaneous equivalent gas loading [m/s]
-        mutable scalar instantLiquidLoading_;
 
         //- Last filtered equivalent gas loading [m/s]
         mutable scalar liquidLoading_;
@@ -167,28 +161,60 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Filtered target gas loading [m/s]
         mutable scalar gasLoadingTarget_;
 
-        //- Enable time-window mass-balance correction
-        Switch balanceControl_;
+        //- Previous timestep's final jG target, used by rate limiter [m/s]
+        mutable scalar jGtargetPrev_;
 
-        //- Time window for accumulated mass-balance error [s]
-        scalar balanceWindow_;
+        //- True after steady-state detection
+        mutable bool steadyStateReached_;
 
-        //- Absolute mass-flow tolerance for the window-averaged error [kg/s]
-        scalar balanceTolerance_;
+        //- Optional patch names measured ONLY for SS detection.
+        //  Typically the top/condenser patch. Empty means use control patches.
+        wordList steadyStatePatchNames_;
 
-        //- Relative tolerance based on max(mDown, mGasUp) [-]
-        scalar balanceRelativeTolerance_;
+        //- Resolved patch IDs for SS detection (incl. NCC processor patches).
+        labelList steadyStatePatchIDs_;
 
-        //- Integral correction gain for the window error [-]
-        scalar balanceIntegralGain_;
+        //- Relative threshold: |eDot_avg|/flow_ref < relTol triggers SS.
+        //  Negative (default) disables auto-detection.
+        scalar balanceSteadyStateRelTol_;
 
-        //- Optional cap for the balance correction loading [m/s]; negative disables
-        scalar maxBalanceCorrection_;
+        //- Minimum absolute flow [mol/s or kg/s] before SS windows are counted.
+        scalar balanceSteadyStateMinFlow_;
 
-        //- Optional relative cap for balance correction as fraction of
-        //  gasLoadingTarget_. Negative disables. Takes priority over
-        //  maxBalanceCorrection_ when gasLoadingTarget_ > 0.
-        scalar maxBalanceCorrectionFraction_;
+        //- Consecutive SS detection windows below relTol required to confirm SS.
+        label balanceSteadyStateConfirmCount_;
+
+        //- Penalty subtracted from consecutiveSteadyWindows_ per failed window.
+        label balanceSteadyStateViolationPenalty_;
+
+        //- Counter of consecutive qualifying windows.
+        mutable label consecutiveSteadyWindows_;
+
+        //- Boiler moles [mol] at the moment SS was detected.
+        //  Negative when not yet captured (no SS or boiler BC not found).
+        mutable scalar reservoirMolesAtSS_;
+
+        //- I-controller: accumulated jG correction [m/s] since SS detection.
+        //  d(jGcorrection_)/dt = K * e / (CG * A0 * tau), e = N_boiler - N_ref
+        mutable scalar jGcorrection_;
+
+        //- Gain for the I-controller on boiler moles [-]
+        scalar steadyStateIntegralGain_;
+
+        //- Timescale [s] normalising the I gain: d(jGcorr)/dt = K*e/(CG*A0*tau)
+        scalar steadyStateIntegralTimescale_;
+
+        //- Width of SS detection window [s] (dict key: balanceWindow)
+        scalar ssDetectWindow_;
+
+        //- Accumulated eDot*dt in the current SS detection window [mol or kg]
+        mutable scalar ssDetectWindowError_;
+
+        //- Elapsed time in current SS detection window [s]
+        mutable scalar ssDetectWindowTime_;
+
+        //- Last time index used for SS detection window accumulation
+        mutable label lastSSDetectTimeIndex_;
 
         //- Last upward gas mass flow through the measured patch [kg/s]
         mutable scalar gasMassFlowRateUp_;
@@ -207,18 +233,6 @@ class totalRefluxPatchGasMeanVelocityForce
 
         //- Last balance error rate. If molarTotalReflux=true: mol/s; else kg/s
         mutable scalar balanceErrorRate_;
-
-        //- Accumulated mass-balance error in the current window [kg]
-        mutable scalar balanceWindowErrorMass_;
-
-        //- Accumulated time in the current balance window [s]
-        mutable scalar balanceWindowTime_;
-
-        //- Superficial gas-loading correction from the balance controller [m/s]
-        mutable scalar balanceCorrectionLoading_;
-
-        //- Last time-index used for the balance-window update
-        mutable label lastBalanceUpdateTimeIndex_;
 
         //- Last computed target superficial gas velocity vector
         mutable vector targetUbar_;
@@ -251,6 +265,31 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Build patchIDs_ from patches_ (original NCC) plus
         //  nonConformalProcessorCyclic patches that refer to them (parallel)
         void buildPatchIDs();
+
+        //- Build steadyStatePatchIDs_ from steadyStatePatchNames_ (same logic).
+        //  Falls back to patchIDs_ when steadyStatePatchNames_ is empty.
+        void buildSteadyStatePatchIDs();
+
+        //- Read reservoir moles directly from inletOutletBoilerFvPatchScalarField
+        //  found at the control patches. Returns -1 if not available.
+        //  In parallel: broadcasts from owning processor via maxOp reduce.
+        scalar readReservoirMoles() const;
+
+        //- Measure instantaneous eDot = nDown - nGasUp (molar) or mDown - mGasUp
+        //  (mass) at the given patch indices. Used for SS detection and integral.
+        scalar measureInstantEDot
+        (
+            const volVectorField& U,
+            const volScalarField& alpha1,
+            const labelList& pids
+        ) const;
+
+        //- Accumulate SS detection window; set steadyStateReached_ when confirmed
+        void detectSteadyState
+        (
+            const volVectorField& U,
+            const volScalarField& alpha1
+        ) const;
 
         //- Return true if a word looks like a liquid alpha field name
         static bool isAlphaFieldName(const word& name);
@@ -317,7 +356,7 @@ class totalRefluxPatchGasMeanVelocityForce
             scalar& patchArea
         ) const;
 
-        //- Update the time-window integral balance controller
+        //- Update SS detection (called after each velocity correction)
         void updateBalanceController
         (
             const volVectorField& U,

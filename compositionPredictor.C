@@ -76,7 +76,7 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     // Alpha masks
     // ---------------------------------------------------------------------
 
-        const scalar aTol = 1e-6;
+        const scalar aTol = 1e-9;
 
         volScalarField a("a",min(max(alpha1, scalar(0)), scalar(1)));
         volScalarField ALPHA1("ALPHA1", (scalar(1) - pos(aTol - a) - pos(a - (scalar(1) - aTol)))*a+ pos(a - (scalar(1) - aTol)));
@@ -95,68 +95,68 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
 
         //volScalarField CL("CL", C1L + C2L);
         //volScalarField CG("CG", C1G + C2G);
-if (!mesh.foundObject<volScalarField>("CL"))
-{
-    mesh.objectRegistry::store
-    (
-        new volScalarField
-        (
-            IOobject
+        if (!mesh.foundObject<volScalarField>("CL"))
+        {
+            mesh.objectRegistry::store
             (
-                "CL",
-                runTime.name(),
-                mesh,
-                IOobject::NO_READ,
-                IOobject::NO_WRITE
-            ),
-            C1L + C2L
-        )
-    );
-}
-else
-{
-    volScalarField& CLstored =
-        const_cast<volScalarField&>
-        (
-            mesh.lookupObject<volScalarField>("CL")
-        );
+                new volScalarField
+                (
+                    IOobject
+                    (
+                        "CL",
+                        runTime.name(),
+                        mesh,
+                        IOobject::NO_READ,
+                        IOobject::NO_WRITE
+                    ),
+                    C1L + C2L
+                )
+            );
+        }
+        else
+        {
+            volScalarField& CLstored =
+                const_cast<volScalarField&>
+                (
+                    mesh.lookupObject<volScalarField>("CL")
+                );
 
-    CLstored = C1L + C2L;
-    CLstored.correctBoundaryConditions();
-}
+            CLstored = C1L + C2L;
+            CLstored.correctBoundaryConditions();
+        }
 
-if (!mesh.foundObject<volScalarField>("CG"))
-{
-    mesh.objectRegistry::store
-    (
-        new volScalarField
-        (
-            IOobject
+        if (!mesh.foundObject<volScalarField>("CG"))
+        {
+            mesh.objectRegistry::store
             (
-                "CG",
-                runTime.name(),
-                mesh,
-                IOobject::NO_READ,
-                IOobject::NO_WRITE
-            ),
-            C1G + C2G
-        )
-    );
-}
-else
-{
-    volScalarField& CGstored =
-        const_cast<volScalarField&>
-        (
-            mesh.lookupObject<volScalarField>("CG")
-        );
+                new volScalarField
+                (
+                    IOobject
+                    (
+                        "CG",
+                        runTime.name(),
+                        mesh,
+                        IOobject::NO_READ,
+                        IOobject::NO_WRITE
+                    ),
+                    C1G + C2G
+                )
+            );
+        }
+        else
+        {
+            volScalarField& CGstored =
+                const_cast<volScalarField&>
+                (
+                    mesh.lookupObject<volScalarField>("CG")
+                );
 
-    CGstored = C1G + C2G;
-    CGstored.correctBoundaryConditions();
-}
+            CGstored = C1G + C2G;
+            CGstored.correctBoundaryConditions();
+        }
 
-const volScalarField& CL = mesh.lookupObject<volScalarField>("CL");
-const volScalarField& CG = mesh.lookupObject<volScalarField>("CG");
+        const volScalarField& CL = mesh.lookupObject<volScalarField>("CL");
+        const volScalarField& CG = mesh.lookupObject<volScalarField>("CG");
         // Molar inventory coefficients
         volScalarField aL("aL", ALPHA1*CL);
         volScalarField aG("aG", ALPHA2*CG);
@@ -538,102 +538,102 @@ const volScalarField& CG = mesh.lookupObject<volScalarField>("CG");
         surfaceScalarField alphaCLPhi1("alphaCLPhi1", alphaPhi1*fvc::interpolate(CL));
         surfaceScalarField alphaCGPhi2("alphaCGPhi2", alphaPhi2*fvc::interpolate(CG));
         // Make boundary molar fluxes consistent with the final corrected U.
-// This is essential for conservative rectification inletOutlet BCs.
-// For nonConformalProcessorCyclic (NCPC) patches: apply upwind-correct
-// molar density. alphaPhi*fvc::interpolate(CL/CG) uses the neighbour
-// boundary value (MPI-received), which is WRONG for OUTFLOW faces where
-// the exiting fluid carries the OWN cell's molar concentration.
-// Use own-cell CL/CG for outflow (phi>0), neighbour CL/CG for inflow
-// (phi<0 — incoming fluid comes from the cyclic neighbour side).
-// Do NOT use U & Sf here (wrong face-normal convention for NCC geometry).
-forAll(mesh.boundary(), patchi)
-{
-    if (isA<nonConformalProcessorCyclicFvPatch>(mesh.boundary()[patchi]))
-    {
-        const fvsPatchScalarField& alphaPhi1p =
-            alphaPhi1.boundaryField()[patchi];
-        const fvsPatchScalarField& alphaPhi2p =
-            alphaPhi2.boundaryField()[patchi];
-
-        const scalarField CLp_own(CL.boundaryField()[patchi].patchInternalField());
-        const scalarField CGp_own(CG.boundaryField()[patchi].patchInternalField());
-        const fvPatchScalarField& CLp_nbr = CL.boundaryField()[patchi];
-        const fvPatchScalarField& CGp_nbr = CG.boundaryField()[patchi];
-
-        fvsPatchScalarField& alphaCLPhi1p =
-            alphaCLPhi1.boundaryFieldRef()[patchi];
-        fvsPatchScalarField& alphaCGPhi2p =
-            alphaCGPhi2.boundaryFieldRef()[patchi];
-
-        // NCPC patches come in two flavours:
-        //
-        //   Owner-side (boiler, proc 0/1):  standard convention
-        //     phi1 > 0 = liquid OUTFLOW to boiler reservoir
-        //     phi2 < 0 = gas   INFLOW  from boiler reservoir
-        //
-        //   Neighbour-side (condenser, proc 2/3):  INVERTED convention
-        //     phi1 > 0 = liquid INFLOW  from condenser reservoir
-        //     phi2 < 0 = gas   OUTFLOW  to condenser reservoir
-        //
-        // For the condenser side we must NEGATE alphaCL/CGPhi so that the
-        // FVM assembler (which always uses phi>0=outflow) sees the correct
-        // direction, and applyInletValuesOnNCPCPatches() can supply xD at
-        // the now-negative (inflow) liquid faces.
-        //
-        // Global mole conservation requires:
-        //   liquid CL: use boiler (NBR at condenser) so both sides of the
-        // All NCPC patches: standard upwind (own for outflow, nbr for inflow).
-        // alphaCLPhi1 keeps the raw phi sign so measureCompositionPredictorFluxes
-        // in the BC classes can read it with the expected convention.
-        forAll(alphaCLPhi1p, facei)
+        // This is essential for conservative rectification inletOutlet BCs.
+        // For nonConformalProcessorCyclic (NCPC) patches: apply upwind-correct
+        // molar density. alphaPhi*fvc::interpolate(CL/CG) uses the neighbour
+        // boundary value (MPI-received), which is WRONG for OUTFLOW faces where
+        // the exiting fluid carries the OWN cell's molar concentration.
+        // Use own-cell CL/CG for outflow (phi>0), neighbour CL/CG for inflow
+        // (phi<0 — incoming fluid comes from the cyclic neighbour side).
+        // Do NOT use U & Sf here (wrong face-normal convention for NCC geometry).
+        forAll(mesh.boundary(), patchi)
         {
-            const scalar phi1 = alphaPhi1p[facei];
-            const scalar phi2 = alphaPhi2p[facei];
-            alphaCLPhi1p[facei] =
-                max(phi1, scalar(0))*CLp_own[facei]
-              + min(phi1, scalar(0))*CLp_nbr[facei];
-            alphaCGPhi2p[facei] =
-                max(phi2, scalar(0))*CGp_own[facei]
-              + min(phi2, scalar(0))*CGp_nbr[facei];
+            if (isA<nonConformalProcessorCyclicFvPatch>(mesh.boundary()[patchi]))
+            {
+                const fvsPatchScalarField& alphaPhi1p =
+                    alphaPhi1.boundaryField()[patchi];
+                const fvsPatchScalarField& alphaPhi2p =
+                    alphaPhi2.boundaryField()[patchi];
+
+                const scalarField CLp_own(CL.boundaryField()[patchi].patchInternalField());
+                const scalarField CGp_own(CG.boundaryField()[patchi].patchInternalField());
+                const fvPatchScalarField& CLp_nbr = CL.boundaryField()[patchi];
+                const fvPatchScalarField& CGp_nbr = CG.boundaryField()[patchi];
+
+                fvsPatchScalarField& alphaCLPhi1p =
+                    alphaCLPhi1.boundaryFieldRef()[patchi];
+                fvsPatchScalarField& alphaCGPhi2p =
+                    alphaCGPhi2.boundaryFieldRef()[patchi];
+
+                // NCPC patches come in two flavours:
+                //
+                //   Owner-side (boiler, proc 0/1):  standard convention
+                //     phi1 > 0 = liquid OUTFLOW to boiler reservoir
+                //     phi2 < 0 = gas   INFLOW  from boiler reservoir
+                //
+                //   Neighbour-side (condenser, proc 2/3):  INVERTED convention
+                //     phi1 > 0 = liquid INFLOW  from condenser reservoir
+                //     phi2 < 0 = gas   OUTFLOW  to condenser reservoir
+                //
+                // For the condenser side we must NEGATE alphaCL/CGPhi so that the
+                // FVM assembler (which always uses phi>0=outflow) sees the correct
+                // direction, and applyInletValuesOnNCPCPatches() can supply xD at
+                // the now-negative (inflow) liquid faces.
+                //
+                // Global mole conservation requires:
+                //   liquid CL: use boiler (NBR at condenser) so both sides of the
+                // All NCPC patches: standard upwind (own for outflow, nbr for inflow).
+                // alphaCLPhi1 keeps the raw phi sign so measureCompositionPredictorFluxes
+                // in the BC classes can read it with the expected convention.
+                forAll(alphaCLPhi1p, facei)
+                {
+                    const scalar phi1 = alphaPhi1p[facei];
+                    const scalar phi2 = alphaPhi2p[facei];
+                    alphaCLPhi1p[facei] =
+                        max(phi1, scalar(0))*CLp_own[facei]
+                    + min(phi1, scalar(0))*CLp_nbr[facei];
+                    alphaCGPhi2p[facei] =
+                        max(phi2, scalar(0))*CGp_own[facei]
+                    + min(phi2, scalar(0))*CGp_nbr[facei];
+                }
+                continue;
+            }
+
+            const fvsPatchVectorField& Sfp =
+                mesh.Sf().boundaryField()[patchi];
+
+            const fvPatchVectorField& Up =
+                U.boundaryField()[patchi];
+
+            const fvPatchScalarField& alpha1p =
+                alpha1.boundaryField()[patchi];
+
+            const fvPatchScalarField& alpha2p =
+                alpha2.boundaryField()[patchi];
+
+            const fvPatchScalarField& CLp =
+                CL.boundaryField()[patchi];
+
+            const fvPatchScalarField& CGp =
+                CG.boundaryField()[patchi];
+
+            fvsPatchScalarField& alphaCLPhi1p =
+                alphaCLPhi1.boundaryFieldRef()[patchi];
+
+            fvsPatchScalarField& alphaCGPhi2p =
+                alphaCGPhi2.boundaryFieldRef()[patchi];
+
+            forAll(alphaCLPhi1p, facei)
+            {
+                const scalar phiPatch = Up[facei] & Sfp[facei];
+
+                alphaCLPhi1p[facei] =
+                    alpha1p[facei]*phiPatch*CLp[facei];
+
+                alphaCGPhi2p[facei] =
+                    alpha2p[facei]*phiPatch*CGp[facei];
+            }
         }
-        continue;
-    }
-
-    const fvsPatchVectorField& Sfp =
-        mesh.Sf().boundaryField()[patchi];
-
-    const fvPatchVectorField& Up =
-        U.boundaryField()[patchi];
-
-    const fvPatchScalarField& alpha1p =
-        alpha1.boundaryField()[patchi];
-
-    const fvPatchScalarField& alpha2p =
-        alpha2.boundaryField()[patchi];
-
-    const fvPatchScalarField& CLp =
-        CL.boundaryField()[patchi];
-
-    const fvPatchScalarField& CGp =
-        CG.boundaryField()[patchi];
-
-    fvsPatchScalarField& alphaCLPhi1p =
-        alphaCLPhi1.boundaryFieldRef()[patchi];
-
-    fvsPatchScalarField& alphaCGPhi2p =
-        alphaCGPhi2.boundaryFieldRef()[patchi];
-
-    forAll(alphaCLPhi1p, facei)
-    {
-        const scalar phiPatch = Up[facei] & Sfp[facei];
-
-        alphaCLPhi1p[facei] =
-            alpha1p[facei]*phiPatch*CLp[facei];
-
-        alphaCGPhi2p[facei] =
-            alpha2p[facei]*phiPatch*CGp[facei];
-    }
-}
 
         X1.correctBoundaryConditions();
 

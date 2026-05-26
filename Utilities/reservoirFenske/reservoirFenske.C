@@ -456,8 +456,15 @@ bool Foam::functionObjects::reservoirFenske::execute()
 
     if (Pstream::master())
     {
+        // In parallel runs time().path() is <case>/processor<N> (absolute).
+        // Strip the processor directory to get the true case root.
+        const fileName caseRoot =
+            Pstream::parRun()
+          ? mesh().time().path().path()
+          : mesh().time().path();
+
         const fileName dir =
-            mesh().time().globalPath()
+            caseRoot
            /"postProcessing"
            /name()
            /"0";
