@@ -643,29 +643,29 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     // are set by the MPI exchange (patchInternalField from the neighbour).
     // For incoming faces this gives the wrong composition; override them now
     // with the reservoir composition BEFORE fvMatrix assembly reads them.
-    auto applyNCPCInletValues = [&]()
-    {
-        if (!Pstream::parRun()) return;
-        forAll(X1.boundaryField(), patchi)
+        auto applyNCPCInletValues = [&]()
         {
-            const fvPatchScalarField& pf = X1.boundaryField()[patchi];
-            if (isA<inletOutletCondenserFvPatchScalarField>(pf))
+            if (!Pstream::parRun()) return;
+            forAll(X1.boundaryField(), patchi)
             {
-                refCast<const inletOutletCondenserFvPatchScalarField>(pf)
-                    .applyInletValuesOnNCPCPatches(X1);
+                const fvPatchScalarField& pf = X1.boundaryField()[patchi];
+                if (isA<inletOutletCondenserFvPatchScalarField>(pf))
+                {
+                    refCast<const inletOutletCondenserFvPatchScalarField>(pf)
+                        .applyInletValuesOnNCPCPatches(X1);
+                }
+                else if (isA<inletOutletBoilerFvPatchScalarField>(pf))
+                {
+                    refCast<const inletOutletBoilerFvPatchScalarField>(pf)
+                        .applyInletValuesOnNCPCPatches(X1);
+                }
             }
-            else if (isA<inletOutletBoilerFvPatchScalarField>(pf))
-            {
-                refCast<const inletOutletBoilerFvPatchScalarField>(pf)
-                    .applyInletValuesOnNCPCPatches(X1);
-            }
-        }
-    };
+        };
 
-    applyNCPCInletValues();
+        applyNCPCInletValues();
 
-        X2 = scalar(1) - X1;
-        X2.correctBoundaryConditions();
+            X2 = scalar(1) - X1;
+            X2.correctBoundaryConditions();
     // ---------------------------------------------------------------------
     // new concentration equation
     // ---------------------------------------------------------------------
@@ -817,94 +817,94 @@ void Foam::solvers::incompressibleVoFTC::compositionPredictor()
     // Correction deltaN = flux_sum * dt: negative → remove moles from reservoir.
     // Liquid-phase imbalance is attributed to the boiler;
     // gas-phase imbalance to the condenser.
-    if (Pstream::parRun())
-    {
-        // Identify reservoir patch names to exclude their NCPC counterparts
-        wordHashSet reservoirPatchNames;
-        forAll(X1.boundaryField(), patchi)
+        if (Pstream::parRun())
         {
-            if
-            (
-                isA<inletOutletBoilerFvPatchScalarField>
-                    (X1.boundaryField()[patchi])
-             || isA<inletOutletCondenserFvPatchScalarField>
-                    (X1.boundaryField()[patchi])
-            )
+            // Identify reservoir patch names to exclude their NCPC counterparts
+            wordHashSet reservoirPatchNames;
+            forAll(X1.boundaryField(), patchi)
             {
-                reservoirPatchNames.insert(mesh.boundary()[patchi].name());
+                if
+                (
+                    isA<inletOutletBoilerFvPatchScalarField>
+                        (X1.boundaryField()[patchi])
+                || isA<inletOutletCondenserFvPatchScalarField>
+                        (X1.boundaryField()[patchi])
+                )
+                {
+                    reservoirPatchNames.insert(mesh.boundary()[patchi].name());
+                }
+            }
+
+            scalar fluxLiqN  = 0;   // liquid-phase total molar flux at interior NCPC
+            scalar fluxLiqN1 = 0;   // species-1 liquid-phase
+            scalar fluxGasN  = 0;   // gas-phase total molar flux
+            scalar fluxGasN1 = 0;   // species-1 gas-phase
+
+            forAll(mesh.boundary(), patchi)
+            {
+                if (!isA<nonConformalProcessorCyclicFvPatch>(mesh.boundary()[patchi]))
+                    continue;
+
+                const auto& ncpc =
+                    refCast<const nonConformalProcessorCyclicFvPatch>
+                        (mesh.boundary()[patchi]);
+
+                const word refName =
+                    ncpc.nonConformalProcessorCyclicPatch().referPatch().name();
+
+                if (reservoirPatchNames.found(refName))
+                    continue;
+
+                const scalarField& phiL  = alphaCLPhi1.boundaryField()[patchi];
+                const scalarField& phiG  = alphaCGPhi2.boundaryField()[patchi];
+                const scalarField  X1int =
+                    X1.boundaryField()[patchi].patchInternalField();
+
+                forAll(phiL, facei)
+                {
+                    fluxLiqN  += phiL[facei];
+                    fluxLiqN1 += phiL[facei] * X1int[facei];
+                    fluxGasN  += phiG[facei];
+                    fluxGasN1 += phiG[facei] * X1int[facei];
+                }
+            }
+
+            reduce(fluxLiqN,  sumOp<scalar>());
+            reduce(fluxLiqN1, sumOp<scalar>());
+            reduce(fluxGasN,  sumOp<scalar>());
+            reduce(fluxGasN1, sumOp<scalar>());
+
+            const scalar dt = runTime.deltaT().value();
+
+            const scalar deltaBoilerN  = fluxLiqN  * dt;
+            const scalar deltaBoilerN1 = fluxLiqN1 * dt;
+            const scalar deltaCondN    = fluxGasN  * dt;
+            const scalar deltaCondN1   = fluxGasN1 * dt;
+
+            if (Pstream::master())
+            {
+                Info<< "NCPC conservation: dN_boiler=" << deltaBoilerN
+                    << " dN_cond=" << deltaCondN
+                    << " dN_total=" << deltaBoilerN + deltaCondN
+                    << nl;
+            }
+
+            forAll(X1.boundaryFieldRef(), patchi)
+            {
+                fvPatchScalarField& pf = X1.boundaryFieldRef()[patchi];
+
+                if (isA<inletOutletBoilerFvPatchScalarField>(pf))
+                {
+                    refCast<inletOutletBoilerFvPatchScalarField>(pf)
+                        .correctReservoir(deltaBoilerN, deltaBoilerN1);
+                }
+                else if (isA<inletOutletCondenserFvPatchScalarField>(pf))
+                {
+                    refCast<inletOutletCondenserFvPatchScalarField>(pf)
+                        .correctReservoir(deltaCondN, deltaCondN1);
+                }
             }
         }
-
-        scalar fluxLiqN  = 0;   // liquid-phase total molar flux at interior NCPC
-        scalar fluxLiqN1 = 0;   // species-1 liquid-phase
-        scalar fluxGasN  = 0;   // gas-phase total molar flux
-        scalar fluxGasN1 = 0;   // species-1 gas-phase
-
-        forAll(mesh.boundary(), patchi)
-        {
-            if (!isA<nonConformalProcessorCyclicFvPatch>(mesh.boundary()[patchi]))
-                continue;
-
-            const auto& ncpc =
-                refCast<const nonConformalProcessorCyclicFvPatch>
-                    (mesh.boundary()[patchi]);
-
-            const word refName =
-                ncpc.nonConformalProcessorCyclicPatch().referPatch().name();
-
-            if (reservoirPatchNames.found(refName))
-                continue;
-
-            const scalarField& phiL  = alphaCLPhi1.boundaryField()[patchi];
-            const scalarField& phiG  = alphaCGPhi2.boundaryField()[patchi];
-            const scalarField  X1int =
-                X1.boundaryField()[patchi].patchInternalField();
-
-            forAll(phiL, facei)
-            {
-                fluxLiqN  += phiL[facei];
-                fluxLiqN1 += phiL[facei] * X1int[facei];
-                fluxGasN  += phiG[facei];
-                fluxGasN1 += phiG[facei] * X1int[facei];
-            }
-        }
-
-        reduce(fluxLiqN,  sumOp<scalar>());
-        reduce(fluxLiqN1, sumOp<scalar>());
-        reduce(fluxGasN,  sumOp<scalar>());
-        reduce(fluxGasN1, sumOp<scalar>());
-
-        const scalar dt = runTime.deltaT().value();
-
-        const scalar deltaBoilerN  = fluxLiqN  * dt;
-        const scalar deltaBoilerN1 = fluxLiqN1 * dt;
-        const scalar deltaCondN    = fluxGasN  * dt;
-        const scalar deltaCondN1   = fluxGasN1 * dt;
-
-        if (Pstream::master())
-        {
-            Info<< "NCPC conservation: dN_boiler=" << deltaBoilerN
-                << " dN_cond=" << deltaCondN
-                << " dN_total=" << deltaBoilerN + deltaCondN
-                << nl;
-        }
-
-        forAll(X1.boundaryFieldRef(), patchi)
-        {
-            fvPatchScalarField& pf = X1.boundaryFieldRef()[patchi];
-
-            if (isA<inletOutletBoilerFvPatchScalarField>(pf))
-            {
-                refCast<inletOutletBoilerFvPatchScalarField>(pf)
-                    .correctReservoir(deltaBoilerN, deltaBoilerN1);
-            }
-            else if (isA<inletOutletCondenserFvPatchScalarField>(pf))
-            {
-                refCast<inletOutletCondenserFvPatchScalarField>(pf)
-                    .correctReservoir(deltaCondN, deltaCondN1);
-            }
-        }
-    }
 
     // ---------------------------------------------------------------------
     // Final algebraic split for mixed-cell back-substitution

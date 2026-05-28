@@ -19,10 +19,12 @@
                = mDown / (rhoG * A0)    [mass mode]
         smoothed by EMA filter (averagingInterval)
 
-    Phase 2 (post-SS, only when inletOutletBoiler BC is found):
-        jGcorrection_ += K * e / (CG * A0 * tau) * dt
-        where e = N_boiler(t) - N_boiler_SS
+    I-controller (always active once N_ref is known):
+        e_rel = (N_boiler(t) - N_ref) / N_ref
+        jGcorrection_ += K * e_rel * jGeff / tau * dt
+        jGcorrection_ = clamp(jGcorrection_, ±antiWindupFraction * jGeff)
         jGtarget = max(0, jGbase + jGcorrection_)
+    K is dimensionless and scale-invariant. jGeff = gasLoadingTarget_ (smoothed).
 
     Always: rate limiter on |d(jGtarget)/dt| <= maxDeltaGasLoading.
     No velocity cap, no window balance controller.
@@ -201,8 +203,11 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Gain for the I-controller on boiler moles [-]
         scalar steadyStateIntegralGain_;
 
-        //- Timescale [s] normalising the I gain: d(jGcorr)/dt = K*e/(CG*A0*tau)
+        //- Timescale [s] normalising the I gain: d(jGcorr)/dt = K*e_rel*jGeff/tau
         scalar steadyStateIntegralTimescale_;
+
+        //- Anti-windup fraction: |jGcorrection| <= antiWindupFraction * jGeff
+        scalar antiWindupFraction_;
 
         //- Width of SS detection window [s] (dict key: balanceWindow)
         scalar ssDetectWindow_;

@@ -241,6 +241,9 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::readCoeffs
     steadyStateIntegralTimescale_ =
         dict.lookupOrDefault<scalar>("steadyStateIntegralTimescale", 0.05);
 
+    antiWindupFraction_ =
+        dict.lookupOrDefault<scalar>("antiWindupFraction", 0.2);
+
     buildPatchIDs();
     buildSteadyStatePatchIDs();
 }
@@ -747,6 +750,9 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::detectSteadyState
     const volScalarField& alpha1
 ) const
 {
+    // SS-Erkennung deaktiviert — I-Regler läuft immer ab t=0 mit N_Boiler(t=0)
+    // als Referenz. Code bleibt erhalten für spätere Reaktivierung.
+    /*
     if (balanceSteadyStateRelTol_ <= 0 || steadyStateReached_)
     {
         return;
@@ -768,12 +774,6 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::detectSteadyState
         return;
     }
 
-    // Criterion: fractional velocity error |jGbarAve - jGtarget| / jGtarget.
-    // This measures whether the pressure-gradient controller has converged,
-    // which is the physically observable sign of quasi-steady state.
-    // It works without a balance correction controller: once the transient
-    // liquid loading has stabilised and the pressure gradient has caught up,
-    // the error drops reliably below the tolerance.
     const scalar jGbarAve = patchGasUbarAve(U, alpha1);
     const scalar relErr_inst =
         mag(gasLoadingTarget_ - jGbarAve) / gasLoadingTarget_;
@@ -828,6 +828,7 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::detectSteadyState
 
     ssDetectWindowError_ = 0;
     ssDetectWindowTime_  = 0;
+    */
 }
 
 
@@ -1236,57 +1237,76 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateTotalRefluxLoading
     const scalar dt = mesh().time().deltaTValue();
     const label timeIndex = mesh().time().timeIndex();
 
-    // I-controller on boiler moles (post-SS, once per timestep)
-    if (steadyStateReached_ && timeIndex != lastIntegratedTimeIndex_)
+    // Deferred init: retry until the boiler-BC field appears in the registry.
+    // At t=0 the first call may fire before cyclohexane.X (or equivalent) is
+    // registered, returning -1. Keep trying every timestep until it succeeds.
+    if (reservoirMolesAtSS_ < scalar(0))
     {
-        // Lazy init: capture N_boiler_SS if restored from old checkpoint
-        if (reservoirMolesAtSS_ < scalar(0))
+        const scalar N0 = readReservoirMoles();
+        if (N0 >= scalar(0))
         {
-            reservoirMolesAtSS_ = readReservoirMoles();
-            if (reservoirMolesAtSS_ >= scalar(0))
-            {
-                Info<< "totalReflux " << name()
-                    << ": N_boiler_ref late-init = "
-                    << reservoirMolesAtSS_ << " mol" << nl;
-            }
-        }
-
-        if (dt > SMALL
-         && steadyStateIntegralGain_ > SMALL
-         && steadyStateIntegralTimescale_ > SMALL
-         && reservoirMolesAtSS_ >= scalar(0))
-        {
-            const scalar N_now = readReservoirMoles();
-            if (N_now >= scalar(0))
-            {
-                // e < 0: boiler depleted → reduce gas → jGcorrection_ decreases
-                // e > 0: boiler overfilled → increase gas → jGcorrection_ grows
-                const scalar e = N_now - reservoirMolesAtSS_;
-
-                const scalar flowCapacity = molarTotalReflux_
-                    ? max(SMALL, gasMolarConcentrationPatchMean_)
-                      * max(SMALL, A0)
-                      * steadyStateIntegralTimescale_
-                    : max(SMALL, rhoGasPatchMean_)
-                      * max(SMALL, A0)
-                      * steadyStateIntegralTimescale_;
-
-                jGcorrection_ +=
-                    steadyStateIntegralGain_ * e / flowCapacity * dt;
-            }
+            reservoirMolesAtSS_ = N0;
+            Info<< "totalReflux " << name()
+                << ": N_boiler_ref deferred-init at t="
+                << mesh().time().value()
+                << " s: " << reservoirMolesAtSS_ << " mol" << nl;
         }
     }
 
-    // Raw target: post-SS adds I-correction; pre-SS pure feed-forward
-    const scalar jGraw = steadyStateReached_
-        ? max(scalar(0), jGbase + jGcorrection_)
-        : jGbase;
+    // I-controller on N_boiler — always active once reference is initialised.
+    // Normalised formula: K is dimensionless and scale-invariant.
+    // e_rel = (N_now - N_ref) / N_ref; rate = K * e_rel * jGeff / tau
+    // e < 0: boiler depleted → jGcorrection_ decreases → gas reduces
+    // e > 0: boiler overfilled → jGcorrection_ grows → gas increases
+    if (timeIndex != lastIntegratedTimeIndex_
+     && dt > SMALL
+     && steadyStateIntegralGain_ > SMALL
+     && steadyStateIntegralTimescale_ > SMALL
+     && reservoirMolesAtSS_ >= scalar(0))
+    {
+        const scalar N_now = readReservoirMoles();
+        if (N_now >= scalar(0))
+        {
+            const scalar e = N_now - reservoirMolesAtSS_;
+            const scalar eRel = e / max(reservoirMolesAtSS_, SMALL);
+            const scalar jGeff = max(gasLoadingTarget_, SMALL);
+
+            jGcorrection_ +=
+                steadyStateIntegralGain_
+                * eRel * jGeff
+                / max(steadyStateIntegralTimescale_, SMALL)
+                * dt;
+        }
+    }
+
+    // Anti-windup: clamp jGcorrection_ to ±antiWindupFraction * jGeff
+    if (antiWindupFraction_ > SMALL && gasLoadingTarget_ > SMALL)
+    {
+        const scalar maxCorr = antiWindupFraction_ * gasLoadingTarget_;
+        jGcorrection_ = max(-maxCorr, min(maxCorr, jGcorrection_));
+    }
+
+    // Raw target always includes I-correction (jGcorrection_ = 0 until ref is set)
+    const scalar jGraw = max(scalar(0), jGbase + jGcorrection_);
 
     instantGasLoadingTarget_ = jGraw;
 
     // First call ever: initialise and return
     if (!liquidLoadingInitialized_)
     {
+        // Capture initial N_boiler as I-controller reference (t ≈ 0).
+        // The I-controller guard requires reservoirMolesAtSS_ >= 0, so this
+        // enables it from the second timestep onward.
+        if (reservoirMolesAtSS_ < scalar(0))
+        {
+            reservoirMolesAtSS_ = readReservoirMoles();
+            if (reservoirMolesAtSS_ >= scalar(0))
+            {
+                Info<< "totalReflux " << name()
+                    << ": N_boiler_ref initialised at t=0: "
+                    << reservoirMolesAtSS_ << " mol" << nl;
+            }
+        }
         gasLoadingTarget_ = jGraw;
         liquidLoading_ = jGraw;
         jGtargetPrev_ = jGraw;
@@ -1716,6 +1736,7 @@ totalRefluxPatchGasMeanVelocityForce
     jGcorrection_(0),
     steadyStateIntegralGain_(0.5),
     steadyStateIntegralTimescale_(0.05),
+    antiWindupFraction_(0.2),
     ssDetectWindow_(0.05),
     ssDetectWindowError_(0),
     ssDetectWindowTime_(0),
@@ -1788,8 +1809,9 @@ totalRefluxPatchGasMeanVelocityForce
         << "SS auto-detection: relTol = " << balanceSteadyStateRelTol_
         << ", window = " << ssDetectWindow_
         << " s, confirmCount = " << balanceSteadyStateConfirmCount_ << nl
-        << "I-controller gain = " << steadyStateIntegralGain_
-        << ", timescale = " << steadyStateIntegralTimescale_ << " s" << nl
+        << "I-controller gain (normalised) = " << steadyStateIntegralGain_
+        << ", timescale = " << steadyStateIntegralTimescale_ << " s"
+        << ", anti-windup fraction = " << antiWindupFraction_ << nl
         << "Rate limiter: maxDeltaGasLoading = " << maxDeltaGasLoading_
         << " m/s/s" << nl
         << "Liquid alpha field = "
