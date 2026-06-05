@@ -17,6 +17,7 @@
 #include "timeIOdictionary.H"
 #include "zero.H"
 #include "inletOutletBoilerFvPatchScalarField.H"
+#include "inletOutletCondenserFvPatchScalarField.H"
 
 namespace Foam
 {
@@ -235,11 +236,14 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::readCoeffs
             balanceSteadyStateConfirmCount_
         );
 
-    steadyStateIntegralGain_ =
-        dict.lookupOrDefault<scalar>("steadyStateIntegralGain", 0.5);
-
     steadyStateIntegralTimescale_ =
         dict.lookupOrDefault<scalar>("steadyStateIntegralTimescale", 0.05);
+
+    proportionalGain_ =
+        dict.lookupOrDefault<scalar>("proportionalGain", scalar(1));
+
+    integralRatio_ =
+        dict.lookupOrDefault<scalar>("integralRatio", 0.1);
 
     antiWindupFraction_ =
         dict.lookupOrDefault<scalar>("antiWindupFraction", 0.2);
@@ -1139,6 +1143,45 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateBalanceController
 }
 
 
+Foam::scalar
+Foam::fv::totalRefluxPatchGasMeanVelocityForce::computeLiquidMolarConcentration
+(
+    const volScalarField& alpha1
+) const
+{
+    if (!molarFluxFieldsAvailable()) return scalar(-1);
+    if (!mesh().foundObject<volScalarField>(species1LiquidName_)) return scalar(-1);
+    if (rhoLiquidPatchMean_ < SMALL) return scalar(-1);
+
+    const volScalarField& Y1 =
+        mesh().lookupObject<volScalarField>(species1LiquidName_);
+
+    scalar sumInvM = 0, sumArea = 0;
+    forAll(patchIDs_, pi)
+    {
+        const fvPatch& p = mesh().boundary()[patchIDs_[pi]];
+        const scalarField& alpha1p = alpha1.boundaryField()[patchIDs_[pi]];
+        const scalarField& Y1p     = Y1.boundaryField()[patchIDs_[pi]];
+        const scalarField& magSfp  = p.magSf();
+
+        forAll(magSfp, fi)
+        {
+            const scalar al = limitedAlpha(alpha1p[fi]);
+            const scalar w1 = max(scalar(0), min(scalar(1), Y1p[fi]));
+            const scalar invM = w1/W1_ + (scalar(1) - w1)/W2_;
+            sumInvM  += al * invM  * magSfp[fi];
+            sumArea  += al         * magSfp[fi];
+        }
+    }
+    reduce(sumInvM, sumOp<scalar>());
+    reduce(sumArea, sumOp<scalar>());
+
+    if (sumArea < SMALL) return scalar(-1);
+
+    return rhoLiquidPatchMean_ * (sumInvM / sumArea);  // [mol/m3]
+}
+
+
 void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateTotalRefluxLoading
 (
     const volVectorField& U,
@@ -1246,48 +1289,67 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateTotalRefluxLoading
         if (N0 >= scalar(0))
         {
             reservoirMolesAtSS_ = N0;
+            liquidMolarConcentrationRef_ = computeLiquidMolarConcentration(alpha1);
             Info<< "totalReflux " << name()
                 << ": N_boiler_ref deferred-init at t="
                 << mesh().time().value()
-                << " s: " << reservoirMolesAtSS_ << " mol" << nl;
+                << " s: " << reservoirMolesAtSS_ << " mol"
+                << ", C_liq_ref = " << liquidMolarConcentrationRef_
+                << " mol/m3" << nl;
         }
     }
 
-    // I-controller on N_boiler — always active once reference is initialised.
-    // Normalised formula: K is dimensionless and scale-invariant.
-    // e_rel = (N_now - N_ref) / N_ref; rate = K * e_rel * jGeff / tau
-    // e < 0: boiler depleted → jGcorrection_ decreases → gas reduces
-    // e > 0: boiler overfilled → jGcorrection_ grows → gas increases
-    if (timeIndex != lastIntegratedTimeIndex_
-     && dt > SMALL
-     && steadyStateIntegralGain_ > SMALL
-     && steadyStateIntegralTimescale_ > SMALL
-     && reservoirMolesAtSS_ >= scalar(0))
+    // PI-controller on N_boiler — always active once reference is initialised.
+    // Kp_adapt = C_liq(t)/C_liq_ref: composition-based gain scheduling (original).
+    // proportionalGain_ scales Kp_adapt uniformly: 1 = original, >1 = stronger.
+    // P-term: proportionalGain * Kp_adapt * e_rel * jGeff   (immediate response)
+    // I-term: accumulated correction, guards against steady-state error.
+    // e < 0: boiler depleted → corrections decrease gas
+    // e > 0: boiler overfilled → corrections increase gas
+    scalar jGcorrectionP = scalar(0);
+    if (reservoirMolesAtSS_ >= scalar(0))
     {
         const scalar N_now = readReservoirMoles();
         if (N_now >= scalar(0))
         {
-            const scalar e = N_now - reservoirMolesAtSS_;
-            const scalar eRel = e / max(reservoirMolesAtSS_, SMALL);
+            const scalar e     = N_now - reservoirMolesAtSS_;
+            const scalar eRel  = e / max(reservoirMolesAtSS_, SMALL);
             const scalar jGeff = max(gasLoadingTarget_, SMALL);
 
-            jGcorrection_ +=
-                steadyStateIntegralGain_
-                * eRel * jGeff
-                / max(steadyStateIntegralTimescale_, SMALL)
-                * dt;
+            // Adaptive gain from liquid molar concentration (original behaviour)
+            const scalar Cliq = computeLiquidMolarConcentration(alpha1);
+            const scalar Kp =
+                (Cliq > SMALL && liquidMolarConcentrationRef_ > SMALL)
+                ? Cliq / liquidMolarConcentrationRef_
+                : scalar(1);
+
+            const scalar Kp_total = proportionalGain_ * Kp;
+
+            // I-term (once per time index to avoid double integration in PISO)
+            if (timeIndex != lastIntegratedTimeIndex_
+             && dt > SMALL
+             && steadyStateIntegralTimescale_ > SMALL)
+            {
+                jGcorrection_ +=
+                    Kp_total * integralRatio_ * eRel * jGeff
+                    / max(steadyStateIntegralTimescale_, SMALL)
+                    * dt;
+            }
+
+            // P-term: immediate response to current error
+            jGcorrectionP = Kp_total * eRel * jGeff;
         }
     }
 
-    // Anti-windup: clamp jGcorrection_ to ±antiWindupFraction * jGeff
+    // Anti-windup: clamp I-term to ±antiWindupFraction * jGeff
     if (antiWindupFraction_ > SMALL && gasLoadingTarget_ > SMALL)
     {
         const scalar maxCorr = antiWindupFraction_ * gasLoadingTarget_;
         jGcorrection_ = max(-maxCorr, min(maxCorr, jGcorrection_));
     }
 
-    // Raw target always includes I-correction (jGcorrection_ = 0 until ref is set)
-    const scalar jGraw = max(scalar(0), jGbase + jGcorrection_);
+    // Raw target: feed-forward + I-correction + P-correction
+    const scalar jGraw = max(scalar(0), jGbase + jGcorrection_ + jGcorrectionP);
 
     instantGasLoadingTarget_ = jGraw;
 
@@ -1333,9 +1395,7 @@ void Foam::fv::totalRefluxPatchGasMeanVelocityForce::updateTotalRefluxLoading
             (scalar(1) - beta)*gasLoadingTarget_ + beta*jGraw;
     }
 
-    // Rate limiter: only active pre-SS to protect against sudden jumps during startup.
-    // Post-SS the I-controller drives jGtarget; blocking it creates lower-envelope
-    // tracking and a persistent balance error.
+    // Rate limiter: symmetric, only active pre-SS.
     scalar jGnew = jGfiltered;
     if (!steadyStateReached_ && maxDeltaGasLoading_ > 0 && dt > SMALL)
     {
@@ -1712,6 +1772,7 @@ totalRefluxPatchGasMeanVelocityForce
     counterCurrent_(true),
     maxDeltaGasLoading_(-1),
     lastIntegratedTimeIndex_(-1),
+    lastPrintTimeIndex_(-1),
     accumulatedEquivalentGasVolume_(0),
     accumulatedTime_(0),
     liquidFlowRate_(0),
@@ -1733,9 +1794,11 @@ totalRefluxPatchGasMeanVelocityForce
     balanceSteadyStateViolationPenalty_(3),
     consecutiveSteadyWindows_(0),
     reservoirMolesAtSS_(-1),
+    liquidMolarConcentrationRef_(-1),
     jGcorrection_(0),
-    steadyStateIntegralGain_(0.5),
     steadyStateIntegralTimescale_(0.05),
+    proportionalGain_(1),
+    integralRatio_(0.1),
     antiWindupFraction_(0.2),
     ssDetectWindow_(0.05),
     ssDetectWindowError_(0),
@@ -1809,7 +1872,8 @@ totalRefluxPatchGasMeanVelocityForce
         << "SS auto-detection: relTol = " << balanceSteadyStateRelTol_
         << ", window = " << ssDetectWindow_
         << " s, confirmCount = " << balanceSteadyStateConfirmCount_ << nl
-        << "I-controller gain (normalised) = " << steadyStateIntegralGain_
+        << "PI-controller: proportionalGain = " << proportionalGain_
+        << ", integralRatio = " << integralRatio_
         << ", timescale = " << steadyStateIntegralTimescale_ << " s"
         << ", anti-windup fraction = " << antiWindupFraction_ << nl
         << "Rate limiter: maxDeltaGasLoading = " << maxDeltaGasLoading_
@@ -1955,18 +2019,15 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::constrain
 
     if (mag(targetUbar_) <= SMALL)
     {
-        Info<< "Total-reflux gas pressure gradient source:"
-            << (molarTotalReflux_ ? " nDown = " : " mDown = ")
-            << (molarTotalReflux_
-                ? totalMolarFlowRateDown_ : totalMassFlowRateDown_)
-            << ", QLdown = " << liquidVolumeFlowRateDown_
-            << ", QGdown = " << gasVolumeFlowRateDown_
-            << ", QGup = " << gasVolumeFlowRateUp_
-            << ", balanceErr = " << balanceErrorRate_
-            << ", target jG = " << jGtarget
-            << ", actual jG = " << jGbarAve
-            << ", pressure gradient = " << gradP0_ + dGradP_
-            << endl;
+        const label timeIndex0 = mesh().time().timeIndex();
+        if (timeIndex0 != lastPrintTimeIndex_)
+        {
+            Info<< "Total-reflux: target=0 (no flow yet)"
+                << ", balanceErr=" << balanceErrorRate_
+                << ", gradP=" << gradP0_ + dGradP_
+                << endl;
+            lastPrintTimeIndex_ = timeIndex0;
+        }
 
         writeProps(0);
         return true;
@@ -2007,20 +2068,71 @@ bool Foam::fv::totalRefluxPatchGasMeanVelocityForce::constrain
 
     const scalar gradP = gradP0_ + dGradP_;
 
-    Info<< "Total-reflux gas pressure gradient source:"
-        << (molarTotalReflux_ ? " nDown = " : " mDown = ")
-        << (molarTotalReflux_ ? totalMolarFlowRateDown_ : totalMassFlowRateDown_)
-        << ", QLdown = " << liquidVolumeFlowRateDown_
-        << ", QGdown = " << gasVolumeFlowRateDown_
-        << ", QGup = " << gasVolumeFlowRateUp_
-        << ", mGasUp = " << gasMassFlowRateUp_
-        << ", balanceErr = " << balanceErrorRate_
-        << ", jGbase/target/actual = " << instantGasLoadingTarget_
-        << "/" << jGtarget << "/" << jGbarAve
-        << ", jGcorrection = " << jGcorrection_
-        << ", SS = " << (steadyStateReached_ ? "yes" : "no")
-        << ", pressure gradient = " << gradP
-        << endl;
+    const label timeIndex = mesh().time().timeIndex();
+    if (timeIndex != lastPrintTimeIndex_)
+    {
+        // Read boiler state (N, xB, yB) and condenser state (N, xD)
+        scalar N_boilerNow = scalar(-1);
+        scalar xB = scalar(-1);
+        scalar yB = scalar(-1);
+        scalar N_cond = scalar(-1);
+        scalar xD = scalar(-1);
+        {
+            const HashTable<const volScalarField*> flds =
+                mesh().lookupClass<volScalarField>();
+            forAllConstIter(HashTable<const volScalarField*>, flds, iter)
+            {
+                const volScalarField& fld = *iter();
+                forAll(fld.boundaryField(), pi)
+                {
+                    const fvPatchScalarField& pf = fld.boundaryField()[pi];
+
+                    if (N_boilerNow < scalar(0)
+                     && isA<inletOutletBoilerFvPatchScalarField>(pf))
+                    {
+                        const auto& bf =
+                            refCast<const inletOutletBoilerFvPatchScalarField>(pf);
+                        N_boilerNow = bf.reservoirMoles();
+                        xB = bf.reservoirX();
+                        yB = bf.reservoirY();
+                    }
+
+                    if (N_cond < scalar(0)
+                     && isA<inletOutletCondenserFvPatchScalarField>(pf))
+                    {
+                        const auto& cf =
+                            refCast<const inletOutletCondenserFvPatchScalarField>(pf);
+                        N_cond = cf.reservoirMoles();
+                        xD = cf.reservoirX();
+                    }
+                }
+                if (N_boilerNow >= scalar(0) && N_cond >= scalar(0)) break;
+            }
+            reduce(N_boilerNow, maxOp<scalar>());
+            reduce(xB,          maxOp<scalar>());
+            reduce(yB,          maxOp<scalar>());
+            reduce(N_cond,      maxOp<scalar>());
+            reduce(xD,          maxOp<scalar>());
+        }
+
+        Info<< "Boiler : N=" << N_boilerNow
+            << " mol (ref=" << reservoirMolesAtSS_ << ")"
+            << ", xB=" << xB << ", yB=" << yB << nl
+            << "Cond   : N=" << N_cond
+            << " mol, xD=" << xD << nl;
+
+        Info<< "Total-reflux:"
+            << (molarTotalReflux_ ? " nDown=" : " mDown=")
+            << (molarTotalReflux_ ? totalMolarFlowRateDown_ : totalMassFlowRateDown_)
+            << ", balanceErr=" << balanceErrorRate_
+            << ", jGbase/target/actual=" << instantGasLoadingTarget_
+            << "/" << jGtarget << "/" << jGbarAve
+            << ", jGcorr=" << jGcorrection_
+            << ", gradP=" << gradP
+            << endl;
+
+        lastPrintTimeIndex_ = timeIndex;
+    }
 
     writeProps(gradP);
 

@@ -32,16 +32,56 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 SPECIES1_NAME = "Cyclohexan"
 SPECIES2_NAME = "n-Heptan"
-COL_HEIGHT_M  = 0.05       # column height [m] — blockMeshDict: y=50mm; used only for axis annotation
+COL_HEIGHT_M  = 0.05080    # column height [m] — InitialInputParameter: H = 0.05080
 
 FUNC_NAME = "reservoirFenske"   # postProcessing subfolder written by the function object
 
+# Subsampling: read every STRIDE-th data row to reduce RAM usage.
+# 1 = every row (full resolution), 100 = every 100th row, etc.
+STRIDE = 100
+
+# ── Gas-loading plot (Plot 14) ───────────────────────────────────────────────
+# Name of the fvConstraint in fvConstraints (used to find uniform/*Properties)
+CONSTRAINT_NAME     = "momentumSource"
+
+# Boiler-patch PatchBR folders (used as fallback if no uniform files exist)
+BOILER_PATCHBR_FOLDERS = [
+    "PatchBR1S1",
+    "PatchBR2S1", "PatchBR2S2", "PatchBR2S3", "PatchBR2S4",
+    "PatchBR3S1", "PatchBR3S2", "PatchBR3S3", "PatchBR3S4",
+    "PatchBR4S1", "PatchBR4S2", "PatchBR4S3", "PatchBR4S4",
+]
+
 CONDENSER_PATCHES = [           # top-apparatus patches (inletOutletCondenser BC)
-    "bottom_Top_on_top",
+    "NCC_R1S1_on_PatchTR1S1",
+    "NCC_R2S1_on_PatchTR2S1",
+    "NCC_R2S2_on_PatchTR2S2",
+    "NCC_R2S3_on_PatchTR2S3",
+    "NCC_R2S4_on_PatchTR2S4",
+    "NCC_R3S1_on_PatchTR3S1",
+    "NCC_R3S2_on_PatchTR3S2",
+    "NCC_R3S3_on_PatchTR3S3",
+    "NCC_R3S4_on_PatchTR3S4",
+    "NCC_R4S1_on_PatchTR4S1",
+    "NCC_R4S2_on_PatchTR4S2",
+    "NCC_R4S3_on_PatchTR4S3",
+    "NCC_R4S4_on_PatchTR4S4",
 ]
 
 BOILER_PATCHES = [              # bottom-apparatus patches (inletOutletBoiler BC)
-    "bottom_Top_on_bottom",
+    "NCC_R1S1_on_PatchBR1S1",
+    "NCC_R2S1_on_PatchBR2S1",
+    "NCC_R2S2_on_PatchBR2S2",
+    "NCC_R2S3_on_PatchBR2S3",
+    "NCC_R2S4_on_PatchBR2S4",
+    "NCC_R3S1_on_PatchBR3S1",
+    "NCC_R3S2_on_PatchBR3S2",
+    "NCC_R3S3_on_PatchBR3S3",
+    "NCC_R3S4_on_PatchBR3S4",
+    "NCC_R4S1_on_PatchBR4S1",
+    "NCC_R4S2_on_PatchBR4S2",
+    "NCC_R4S3_on_PatchBR4S3",
+    "NCC_R4S4_on_PatchBR4S4",
 ]
 
 
@@ -50,9 +90,13 @@ BOILER_PATCHES = [              # bottom-apparatus patches (inletOutletBoiler BC
 # ---------------------------------------------------------------------------
 
 def read_table(path: Path) -> pd.DataFrame:
-    """Read OpenFOAM postProcessing .dat file with '# Time ...' header."""
+    """Read OpenFOAM postProcessing .dat file with '# Time ...' header.
+
+    Only every STRIDE-th data row is kept to limit RAM usage.
+    """
     header = None
     rows = []
+    row_counter = 0
     with path.open("r", errors="ignore") as f:
         for line in f:
             s = line.strip()
@@ -66,7 +110,9 @@ def read_table(path: Path) -> pd.DataFrame:
             if header is not None:
                 vals = s.split()
                 if len(vals) == len(header):
-                    rows.append(vals)
+                    if row_counter % STRIDE == 0:
+                        rows.append(vals)
+                    row_counter += 1
     if header is None:
         raise ValueError(f"No '# Time ...' header found in {path}")
     df = pd.DataFrame(rows, columns=header)
@@ -216,9 +262,9 @@ def compute_global_conservation(df: pd.DataFrame) -> pd.DataFrame:
 def plot_01_konzentrationen(df: pd.DataFrame, m: pd.DataFrame, out: Path) -> None:
     _, ax = plt.subplots(figsize=(12, 5))
     for col, label, ls in [
-        ("xD", f"xD Kondensator ({SPECIES1_NAME})", "-"),
-        ("xB", f"xB Boiler ({SPECIES1_NAME})", "-"),
-        ("yB", f"yB Boiler-Dampf ({SPECIES1_NAME})", "--"),
+        ("xD", f"xD Kondensor ({SPECIES1_NAME})", "-"),
+        ("xB", f"xB Verdampfer ({SPECIES1_NAME})", "-"),
+        ("yB", f"yB Verdampfer-Dampf ({SPECIES1_NAME})", "--"),
     ]:
         if col in df:
             ax.plot(df["Time"], df[col], alpha=0.18, color=f"C{['xD','xB','yB'].index(col)}")
@@ -268,14 +314,14 @@ def plot_03_Nmin(df: pd.DataFrame, m: pd.DataFrame, out: Path) -> None:
         return
     _, ax = plt.subplots(figsize=(12, 5))
     ax.plot(df["Time"], df["NminColumnGeo"], alpha=0.18, color="C1")
-    ax.plot(m["Time"], m["NminColumnGeo"], color="C1", label="Nmin (Fenske, inkl. Boiler)")
+    ax.plot(m["Time"], m["NminColumnGeo"], color="C1", label="Nmin (Fenske, inkl. Verdampfer)")
     ax.plot(m["Time"], m["NminColumnGeo"] - 1, color="C2", ls="--",
             label="Npacking = Nmin − 1 (Kolonnenstufen)")
-    ax.axhline(1, color="gray", ls=":", lw=1, label="Nmin = 1 (nur Boiler-VLE)")
+    ax.axhline(1, color="gray", ls=":", lw=1, label="Nmin = 1 (nur Verdampfer-VLE)")
     ax.set_xlabel("Zeit [s]")
     ax.set_ylabel("Stufenzahl [-]")
     ax.set_title("Fenske-Stufenzahl über Zeit\n"
-                 "Nmin inkl. Boiler als Gleichgewichtsstufe; Npacking = Nmin − 1")
+                 "Nmin inkl. Verdampfer als Gleichgewichtsstufe; Npacking = Nmin − 1")
     ax.grid(True, alpha=0.4)
     # Y-axis from 0 to 1.3 * final value — shows the full rise from 0.
     s = m["NminColumnGeo"].dropna()
@@ -329,8 +375,8 @@ def plot_05_massenbilanz_fehler_abs(df: pd.DataFrame, m: pd.DataFrame, out: Path
 
 
 def plot_06_reservoir_fuellstand(df: pd.DataFrame, m: pd.DataFrame, out: Path) -> None:
-    cols      = [("ND",      "N Kondensator", "C0"),
-                 ("NB",      "N Boiler",      "C1"),
+    cols      = [("ND",      "N Kondensor", "C0"),
+                 ("NB",      "N Verdampfer",      "C1"),
                  ("NColumn", "N Kolonne",     "C2")]
     available = [(c, l, clr) for c, l, clr in cols if c in df.columns]
     if not available:
@@ -341,7 +387,7 @@ def plot_06_reservoir_fuellstand(df: pd.DataFrame, m: pd.DataFrame, out: Path) -
         ax.plot(m["Time"],  m[col]  * 1000, label=label, color=clr)
     ax.set_xlabel("Zeit [s]")
     ax.set_ylabel("Stoffmenge [mmol]")
-    ax.set_title("Füllstände: Kondensator, Boiler, Kolonne")
+    ax.set_title("Füllstände: Kondensor, Verdampfer, Kolonne")
     ax.grid(True, alpha=0.4)
     ax.legend()
     savefig(out / "06_reservoir_fuellstand.png")
@@ -369,8 +415,8 @@ def plot_08_apparate_molarstroeme(cond: pd.DataFrame | None,
     _, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     for ax, df_app, title in [
-        (axes[0], cond, "Kondensator"),
-        (axes[1], boil, "Boiler"),
+        (axes[0], cond, "Kondensor"),
+        (axes[1], boil, "Verdampfer"),
     ]:
         if df_app is None:
             ax.set_title(f"{title}: keine Daten")
@@ -403,8 +449,8 @@ def plot_09_phasenstroeme(cond: pd.DataFrame | None,
     _, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     for ax, df_app, title in [
-        (axes[0], cond, "Kondensator"),
-        (axes[1], boil, "Boiler"),
+        (axes[0], cond, "Kondensor"),
+        (axes[1], boil, "Verdampfer"),
     ]:
         if df_app is None:
             ax.set_title(f"{title}: keine Daten")
@@ -437,8 +483,8 @@ def plot_10_apparate_bilanzfehler(cond: pd.DataFrame | None,
     _, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     for ax, df_app, title in [
-        (axes[0], cond, "Kondensator"),
-        (axes[1], boil, "Boiler"),
+        (axes[0], cond, "Kondensor"),
+        (axes[1], boil, "Verdampfer"),
     ]:
         if df_app is None:
             ax.set_title(f"{title}: keine Daten")
@@ -469,8 +515,8 @@ def plot_11_x_to_from(cond: pd.DataFrame | None,
     _, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     for ax, df_app, title in [
-        (axes[0], cond, "Kondensator"),
-        (axes[1], boil, "Boiler"),
+        (axes[0], cond, "Kondensor"),
+        (axes[1], boil, "Verdampfer"),
     ]:
         if df_app is None:
             ax.set_title(f"{title}: keine Daten")
@@ -505,8 +551,8 @@ def plot_12_raw_vs_ist(cond_raw: pd.DataFrame | None, boil_raw: pd.DataFrame | N
     _, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     for ax, raw, app, title in [
-        (axes[0], cond_raw, cond_app, "Kondensator"),
-        (axes[1], boil_raw, boil_app, "Boiler"),
+        (axes[0], cond_raw, cond_app, "Kondensor"),
+        (axes[1], boil_raw, boil_app, "Verdampfer"),
     ]:
         if raw is None or app is None:
             ax.set_title(f"{title}: keine Daten")
@@ -615,7 +661,7 @@ def print_summary(df: pd.DataFrame,
               f"max|drift|={max_drift:.3e} mol ({max_pct:.4f}%)")
 
     # Apparatus summary
-    for name, app in [("Condenser", cond), ("Boiler", boil)]:
+    for name, app in [("Condenser", cond), ("Verdampfer", boil)]:
         if app is None or app.empty:
             continue
         last_a = app.iloc[-1]
@@ -631,6 +677,173 @@ def print_summary(df: pd.DataFrame,
                 print(f"  {label:16s} = {float(app[c].abs().max()):.3e} mol")
 
     print(f"\n{'='*60}\n")
+
+
+# ---------------------------------------------------------------------------
+# Gas loading helpers and plot
+# ---------------------------------------------------------------------------
+
+def load_gas_loading_from_uniform(case: Path, constraint_name: str) -> pd.DataFrame | None:
+    """Read gasLoadingTarget / jGcorrection / liquidLoading from
+    <time>/uniform/<constraint_name>Properties files written by writeProps().
+
+    Returns a DataFrame with columns [Time, gasLoadingTarget, jGcorrection,
+    liquidLoading, instantGasLoadingTarget] sorted by time, or None if no
+    files found.
+    """
+    records = []
+    for time_dir in sorted(case.iterdir(), key=lambda p: float(p.name)
+                           if p.is_dir() and p.name.replace('.', '', 1).replace('e-', '', 1)
+                           .replace('e+', '', 1).lstrip('-').isdigit() else -1e300):
+        if not time_dir.is_dir():
+            continue
+        prop_file = time_dir / "uniform" / f"{constraint_name}Properties"
+        if not prop_file.exists():
+            continue
+        try:
+            t = float(time_dir.name)
+        except ValueError:
+            continue
+        # Parse OpenFOAM dictionary: key  value;
+        row = {"Time": t}
+        with prop_file.open() as f:
+            for line in f:
+                line = line.strip().rstrip(";")
+                parts = line.split()
+                if len(parts) == 2 and parts[0] in (
+                    "gasLoadingTarget", "jGcorrection",
+                    "liquidLoading", "instantGasLoadingTarget",
+                ):
+                    try:
+                        row[parts[0]] = float(parts[1])
+                    except ValueError:
+                        pass
+        if len(row) > 1:
+            records.append(row)
+    if not records:
+        return None
+    df = pd.DataFrame(records).sort_values("Time").reset_index(drop=True)
+    return df
+
+
+def load_gas_loading_from_patchbr(case: Path, folders: list[str]) -> pd.DataFrame | None:
+    """Fallback: sum alphaPhi.liquid from PatchBR surfaceFieldValue files.
+
+    Returns DataFrame with [Time, alphaPhi_liquid_total] — the total downward
+    liquid volumetric flux [m³/s] through all boiler patches.  Useful for
+    visualising the oscillation pattern when uniform files are unavailable.
+    """
+    base = case / "postProcessing"
+    frames: list[pd.DataFrame] = []
+    total_area = 0.0
+    for folder in folders:
+        dat = base / folder / "0" / "surfaceFieldValue.dat"
+        if not dat.exists():
+            continue
+        # Read area from header comment
+        area = 0.0
+        with dat.open() as f:
+            for line in f:
+                if line.startswith("# Area"):
+                    try:
+                        area = float(line.split(":")[-1].strip())
+                    except ValueError:
+                        pass
+                    break
+        total_area += area
+        df = read_table(dat)
+        if df is None or df.empty:
+            continue
+        frames.append(df)
+    if not frames:
+        return None
+    combined = frames[0].set_index("Time")
+    for f in frames[1:]:
+        combined = combined.add(f.set_index("Time"), fill_value=0)
+    combined = combined.reset_index()
+    combined.attrs["total_area_m2"] = total_area
+    return combined
+
+
+def plot_14_gasbelastung(
+    boil_app: pd.DataFrame | None,
+    gas_props: pd.DataFrame | None,
+    patchbr: pd.DataFrame | None,
+    out: Path,
+    window: int,
+) -> None:
+    """Plot 14 — gas and liquid loading over time.
+
+    Top panel: gasLoadingTarget [m/s] if uniform files available,
+               else G_from (gas) + L_to (liquid) [mol/s] from apparatusBalance.
+    Bottom panel: jGcorrection [m/s] only when uniform files are available.
+    """
+    has_props = gas_props is not None and "gasLoadingTarget" in gas_props.columns
+    has_corr  = gas_props is not None and "jGcorrection"     in gas_props.columns
+    nrows = 2 if has_corr else 1
+    _, axes = plt.subplots(nrows, 1, figsize=(14, 5 * nrows), sharex=True)
+    if nrows == 1:
+        axes = [axes]
+
+    # ── Top panel ─────────────────────────────────────────────────────────────
+    ax = axes[0]
+
+    if has_props:
+        gm = med(gas_props, min(window, max(3, len(gas_props) // 10)))
+        ax.plot(gas_props["Time"], gas_props["gasLoadingTarget"],
+                alpha=0.2, color="C1")
+        ax.plot(gm["Time"], gm["gasLoadingTarget"],
+                color="C1", label="jG Ziel (gasLoadingTarget) [m/s]")
+        if "instantGasLoadingTarget" in gas_props.columns:
+            ax.plot(gm["Time"], gm["instantGasLoadingTarget"],
+                    color="C0", ls="--", alpha=0.7, label="jG instantan [m/s]")
+        ax.set_ylabel("Gasbelastung jG [m/s]")
+
+    elif boil_app is not None and "G_from" in boil_app.columns:
+        bm = med(boil_app, window)
+        ax.plot(boil_app["Time"], boil_app["G_from"],
+                alpha=0.15, color="C1")
+        ax.plot(bm["Time"], bm["G_from"],
+                color="C1", label="Gas ← Verdampfer [mol/s]")
+        if "L_to" in boil_app.columns:
+            ax.plot(boil_app["Time"], boil_app["L_to"],
+                    alpha=0.15, color="C0")
+            ax.plot(bm["Time"], bm["L_to"],
+                    color="C0", label="Flüssig → Verdampfer [mol/s]")
+        ax.set_ylabel("Molarstrom [mol/s]")
+
+    elif patchbr is not None and len(patchbr.columns) > 1:
+        col = patchbr.columns[1]
+        pm = med(patchbr, window)
+        ax.plot(patchbr["Time"], patchbr[col].abs(), alpha=0.2, color="C0")
+        ax.plot(pm["Time"], pm[col].abs(), color="C0",
+                label=f"|alphaPhi.liquid| Verdampfer [m³/s]")
+        ax.set_ylabel("Flüssig-Volumenstrom [m³/s]")
+
+    else:
+        ax.text(0.5, 0.5, "Keine Belastungs-Daten verfügbar",
+                ha="center", va="center", transform=ax.transAxes)
+
+    ax.set_title("Gas- und Flüssigbelastung am Verdampfer über Zeit")
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.4)
+
+    # ── Bottom panel: I-controller correction (only when uniform files exist) ─
+    if has_corr:
+        ax2 = axes[1]
+        gm2 = med(gas_props, min(window, max(3, len(gas_props) // 10)))
+        ax2.plot(gas_props["Time"], gas_props["jGcorrection"],
+                 alpha=0.25, color="C2")
+        ax2.plot(gm2["Time"], gm2["jGcorrection"],
+                 color="C2", label="jGcorrection (I-Term) [m/s]")
+        ax2.axhline(0, color="k", lw=0.8, ls="--")
+        ax2.set_ylabel("I-Korrektur [m/s]")
+        ax2.set_title("I-Regler Korrektur")
+        ax2.legend(fontsize=9)
+        ax2.grid(True, alpha=0.4)
+
+    axes[-1].set_xlabel("Zeit [s]")
+    savefig(out / "14_gasbelastung.png")
 
 
 # ---------------------------------------------------------------------------
@@ -681,7 +894,18 @@ def main() -> int:
     # 3) Raw patch flux (optional, for cross-check) — same patch lists
     cond_raw, boil_raw = load_raw_pair(case, args.top_patches, args.bottom_patches)
 
-    # 4) Generate all plots
+    # 4) Gas loading: try uniform files first, then PatchBR fallback
+    gas_props = load_gas_loading_from_uniform(case, CONSTRAINT_NAME)
+    patchbr   = load_gas_loading_from_patchbr(case, BOILER_PATCHBR_FOLDERS) \
+                if gas_props is None else None
+    if gas_props is not None:
+        print("Gas loading: reading from uniform/*Properties (gasLoadingTarget in m/s)")
+    elif patchbr is not None:
+        print("Gas loading: no uniform files — using PatchBR alphaPhi.liquid as proxy")
+    else:
+        print("Gas loading: no data found (skipping plot 14)")
+
+    # 5) Generate all plots
     print(f"Generating plots in {out_dir} ...")
 
     plot_01_konzentrationen(df, m, out_dir)
@@ -697,6 +921,7 @@ def main() -> int:
     plot_11_x_to_from(cond_app, boil_app, out_dir, window)
     plot_12_raw_vs_ist(cond_raw, boil_raw, cond_app, boil_app, out_dir, window)
     plot_13_global_system(df, m, out_dir)
+    plot_14_gasbelastung(boil_app, gas_props, patchbr, out_dir, window)
 
     # 5) Console summary
     print_summary(df, cond_app, boil_app)

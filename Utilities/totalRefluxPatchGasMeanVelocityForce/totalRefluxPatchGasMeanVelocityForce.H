@@ -19,12 +19,15 @@
                = mDown / (rhoG * A0)    [mass mode]
         smoothed by EMA filter (averagingInterval)
 
-    I-controller (always active once N_ref is known):
+    PI-controller (always active once N_ref is known):
+        Kp_adapt = C_liq(t) / C_liq_ref   (composition gain scheduling, original)
+        Kp_total = proportionalGain * Kp_adapt
         e_rel = (N_boiler(t) - N_ref) / N_ref
-        jGcorrection_ += K * e_rel * jGeff / tau * dt
+        jGcorrection_ += Kp_total * integralRatio * e_rel * jGeff / tau * dt  [I-term]
         jGcorrection_ = clamp(jGcorrection_, ±antiWindupFraction * jGeff)
-        jGtarget = max(0, jGbase + jGcorrection_)
-    K is dimensionless and scale-invariant. jGeff = gasLoadingTarget_ (smoothed).
+        jGcorrectionP = Kp_total * e_rel * jGeff                               [P-term]
+        jGtarget = max(0, jGbase + jGcorrection_ + jGcorrectionP)
+    proportionalGain = 1: exactly original behaviour. >1: stronger response.
 
     Always: rate limiter on |d(jGtarget)/dt| <= maxDeltaGasLoading.
     No velocity cap, no window balance controller.
@@ -130,6 +133,9 @@ class totalRefluxPatchGasMeanVelocityForce
         //- Last time-index used for integrating the measured reflux / I-controller
         mutable label lastIntegratedTimeIndex_;
 
+        //- Last time-index at which the per-timestep summary was printed
+        mutable label lastPrintTimeIndex_;
+
         //- Accumulated equivalent target gas volume over averaging window [m3]
         mutable scalar accumulatedEquivalentGasVolume_;
 
@@ -196,15 +202,25 @@ class totalRefluxPatchGasMeanVelocityForce
         //  Negative when not yet captured (no SS or boiler BC not found).
         mutable scalar reservoirMolesAtSS_;
 
-        //- I-controller: accumulated jG correction [m/s] since SS detection.
-        //  d(jGcorrection_)/dt = K * e / (CG * A0 * tau), e = N_boiler - N_ref
+        //- Liquid molar concentration [mol/m3] at patch when N_ref was captured.
+        //  Negative = not yet initialised. Reference for adaptive Kp.
+        mutable scalar liquidMolarConcentrationRef_;
+
+        //- PI-controller I-term: accumulated jG correction [m/s].
+        //  d(jGcorrection_)/dt = Kp * integralRatio * e_rel * jGeff / tau
         mutable scalar jGcorrection_;
 
-        //- Gain for the I-controller on boiler moles [-]
-        scalar steadyStateIntegralGain_;
-
-        //- Timescale [s] normalising the I gain: d(jGcorr)/dt = K*e_rel*jGeff/tau
+        //- Timescale [s] normalising the PI I-gain
         scalar steadyStateIntegralTimescale_;
+
+        //- Multiplier on the adaptive Kp_adapt = C_liq/C_liq_ref [-].
+        //  Kp_total = proportionalGain * Kp_adapt
+        //  proportionalGain = 1: identical to original code.
+        //  proportionalGain > 1: stronger P and I response.
+        scalar proportionalGain_;
+
+        //- Ki/Kp ratio for the PI I-term [-]
+        scalar integralRatio_;
 
         //- Anti-windup fraction: |jGcorrection| <= antiWindupFraction * jGeff
         scalar antiWindupFraction_;
@@ -313,6 +329,13 @@ class totalRefluxPatchGasMeanVelocityForce
 
         //- Return a likely gas phase/group name
         word actualGasPhaseName(const volScalarField& alpha1) const;
+
+        //- Liquid molar concentration [mol/m3] at control patches from species fields.
+        //  Returns -1 if species fields are unavailable.
+        scalar computeLiquidMolarConcentration
+        (
+            const volScalarField& alpha1
+        ) const;
 
         //- Write pressure gradient and measured state to uniform dictionary
         void writeProps(const scalar gradP) const;

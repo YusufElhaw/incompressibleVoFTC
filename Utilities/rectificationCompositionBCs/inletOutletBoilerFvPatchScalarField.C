@@ -898,17 +898,17 @@ void inletOutletBoilerFvPatchScalarField::applyInletValuesOnNCPCPatches
         const scalarField xInternal(X.boundaryField()[pi].patchInternalField());
         fvPatchField<scalar>& Xp = X.boundaryFieldRef()[pi];
 
-        const scalar LpMin = min(Lp);
-        const scalar LpMax = max(Lp);
-        const scalar GpMin = min(Gp);
-        const scalar GpMax = max(Gp);
+        // const scalar LpMin = min(Lp);
+        // const scalar LpMax = max(Lp);
+        // const scalar GpMin = min(Gp);
+        // const scalar GpMax = max(Gp);
 
-        Pout<< "inletOutletBoiler::applyNCPC patch=" << bm[pi].name()
-            << " refPatch=" << refName
-            << " size=" << Xp.size()
-            << " Lp=[" << LpMin << "," << LpMax << "]"
-            << " Gp=[" << GpMin << "," << GpMax << "]"
-            << " xB=" << xB << " yB=" << yB << nl;
+        // Pout<< "inletOutletBoiler::applyNCPC patch=" << bm[pi].name()
+        //     << " refPatch=" << refName
+        //     << " size=" << Xp.size()
+        //     << " Lp=[" << LpMin << "," << LpMax << "]"
+        //     << " Gp=[" << GpMin << "," << GpMax << "]"
+        //     << " xB=" << xB << " yB=" << yB << nl;
 
         forAll(Xp, facei)
         {
@@ -929,14 +929,14 @@ void inletOutletBoilerFvPatchScalarField::applyInletValuesOnNCPCPatches
         }
     }
 
-    if (nPatches > 0 || true)
-    {
-        Pout<< "inletOutletBoiler::applyNCPC " << patch().name()
-            << " nPatches=" << nPatches
-            << " nFacesIn=" << nFacesIn
-            << " nFacesOut=" << nFacesOut
-            << " xB=" << xB << " yB=" << yB << nl;
-    }
+    // if (nPatches > 0 || true)
+    // {
+    //     Pout<< "inletOutletBoiler::applyNCPC " << patch().name()
+    //         << " nPatches=" << nPatches
+    //         << " nFacesIn=" << nFacesIn
+    //         << " nFacesOut=" << nFacesOut
+    //         << " xB=" << xB << " yB=" << yB << nl;
+    // }
 }
 
 
