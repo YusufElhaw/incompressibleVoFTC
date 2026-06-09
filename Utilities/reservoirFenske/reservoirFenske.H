@@ -8,7 +8,7 @@
 This Document is part of the Master thesis of Yusuf Elhaw.
 
 Description
-    Function object for total-reflux rectification simulations.
+    Post processing function object for total-reflux rectification simulations.
 
     Reads reservoir states (ND, xD, NB, xB, yB) from the active
     inletOutletCondenser / inletOutletBoiler BC objects and integrates the

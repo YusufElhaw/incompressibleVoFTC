@@ -15,3 +15,7 @@ Make/linux64GccDPInt32Opt/thermophysicalPredictor.o
 *_DEBUG
 compositionPredictor.C_GCST
 Utilities/*/Make/linux64*
+Utilities/makeSharpSimpleCellDecomposition.py
+TestCases/
+Utilities/prghNonConformalProcessorCyclic*
+Utilities/adjustContin*
