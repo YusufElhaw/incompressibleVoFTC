@@ -1,3 +1,0 @@
-SOURCE += reservoirFenske.C
-
-LIB = $(FOAM_USER_LIBBIN)/libreservoirFenske

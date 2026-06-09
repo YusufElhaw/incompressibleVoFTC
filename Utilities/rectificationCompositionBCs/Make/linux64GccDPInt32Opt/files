@@ -1,4 +1,0 @@
-SOURCE += inletOutletCondenserFvPatchScalarField.C
-SOURCE += inletOutletBoilerFvPatchScalarField.C
-
-LIB = $(FOAM_USER_LIBBIN)/librectificationCompositionBCs
