@@ -14,4 +14,4 @@ Make/linux64GccDPInt32Opt/thermophysicalPredictor.C.dep
 Make/linux64GccDPInt32Opt/thermophysicalPredictor.o
 *_DEBUG
 compositionPredictor.C_GCST
-compositionPredictor.C_GCST
+Utilities/*/Make/linux64*
