@@ -5,6 +5,8 @@
     \\  /    A nd           |
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
+    This Document is part of the Master thesis of Yusuf Elhaw.
+    
     patchGasMeanVelocityForce
 
     A user fvConstraint derived from the OpenFOAM Foundation v13

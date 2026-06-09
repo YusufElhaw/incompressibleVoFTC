@@ -5,6 +5,8 @@
     \\  /    A nd           | Copyright (C) 2011-2025 OpenFOAM Foundation
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
+
 License
     This file is part of OpenFOAM.
 

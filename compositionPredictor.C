@@ -5,6 +5,8 @@
     \\  /    A nd           |
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
+
 Description
     GCST-style composition predictor for incompressibleVoFTC.
 

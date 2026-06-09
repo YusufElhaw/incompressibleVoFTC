@@ -4,6 +4,8 @@
    \\    /   O peration     |
     \\  /    A nd           | Utility: adjustContinuity
      \\/     M anipulation  |
+-------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
 \*---------------------------------------------------------------------------*/
 
 #include "argList.H"

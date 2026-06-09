@@ -5,9 +5,8 @@
     \\  /    A nd           | Derived solver module
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
-License
-    This file is derived from OpenFOAM and released under the GNU General
-    Public License, version 3 or later.
+This Document is part of the Master thesis of Yusuf Elhaw.
+
 \*---------------------------------------------------------------------------*/
 
 #include "incompressibleVoFTC.H"

@@ -5,6 +5,8 @@
     \\  /    A nd           | Copyright (C) 2022-2023 OpenFOAM Foundation
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
+
 License
     This file is part of OpenFOAM.
 
@@ -18,8 +20,6 @@ License
     FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
     for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with OpenFOAM.  If not, see <http://www.gnu.org/licenses/>.
 
 \*---------------------------------------------------------------------------*/
 

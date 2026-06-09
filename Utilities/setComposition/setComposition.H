@@ -1,3 +1,14 @@
+/*---------------------------------------------------------------------------*\
+ =========                 |
+ \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+  \\    /   O peration     | Website:  https://openfoam.org
+   \\  /    A nd           | Copyright (C) 2026
+    \\/     M anipulation  |
+-------------------------------------------------------------------------------
+//This Document is part of the Master thesis of Yusuf Elhaw.
+
+\*---------------------------------------------------------------------------*/
+
 #ifndef setComposition_H
 #define setComposition_H
 

@@ -1,5 +1,13 @@
 /*---------------------------------------------------------------------------*\
-  Finite-holdup total-condenser/reflux-drum inletOutlet composition BC
+ =========                 |
+ \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+  \\    /   O peration     | Website:  https://openfoam.org
+   \\  /    A nd           | Copyright (C) 2026
+    \\/     M anipulation  |
+-------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
+
+Finite-holdup total-condenser/reflux-drum inletOutlet composition BC
 \*---------------------------------------------------------------------------*/
 #include "inletOutletCondenserFvPatchScalarField.H"
 

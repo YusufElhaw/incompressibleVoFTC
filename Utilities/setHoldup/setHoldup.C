@@ -5,6 +5,11 @@
     \\  /    A nd           | Copyright (C) 2026
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
+
+Built on basis of the code of  Johan Roenby, DHI (2016) and the Modification of 
+Henning Scheufler, DLR (2019) https://api.openfoam.com/2412/setAlphaField_8C.html
+
 Application
     setHoldup
 

@@ -1,4 +1,3 @@
-// ************************************************************************* //
 /*---------------------------------------------------------------------------*\
   =========                 |
   \\      /  F ield         | OpenFOAM
@@ -6,6 +5,8 @@
     \\  /    A nd           |
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
+
 Description
     Finite-holdup total-condenser/reflux-drum boundary condition for the
     light-key mole-fraction field X.

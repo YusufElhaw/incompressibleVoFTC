@@ -5,6 +5,8 @@
     \\  /    A nd           |
      \\/     M anipulation  |
 -------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
+
 Description
     Dynamic reboiler finite-holdup inletOutlet boundary condition for the
     light-key mole-fraction field X.

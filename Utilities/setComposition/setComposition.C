@@ -5,6 +5,8 @@
    \\  /    A nd           | Copyright (C) 2026
     \\/     M anipulation  |
 -------------------------------------------------------------------------------
+This Document is part of the Master thesis of Yusuf Elhaw.
+
 Application
     setComposition
 
